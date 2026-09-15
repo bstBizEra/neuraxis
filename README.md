@@ -1,6 +1,6 @@
 # neuraxis
 
-**BST Neuraxis — Intelligent Loop Registry and Governance Gate.** Reference implementation of ILR-001. **v0.3.0.**
+**BST Neuraxis — Intelligent Loop Registry and Governance Gate.** Reference implementation of ILR-001. **v0.5.0.**
 
 Capability is licensed by the governance controls paired to it. A capability whose controls do not hold a current passing attestation is denied — mechanically, at the call site, not by instruction to an agent.
 
@@ -172,6 +172,34 @@ echo '{"intent":"run pipeline","identity":"agent-drafter","role":"drafter",
 
 Unknown request fields are rejected rather than ignored, so a typo (`rollbackTested`) fails loudly instead of silently dropping a constraint.
 
+### Node / maw-js
+
+`clients/js` is a zero-dependency Node client over the same contract:
+
+```js
+import { createClient } from "@bst/neuraxis-client";
+const gate = createClient({ attestations: "attestations.jsonl" });
+await gate.withCapability(request, async (verdict) => { /* obligations on verdict */ });
+```
+
+Its decision table is asserted against `neuraxis contract` in CI, so adding a
+`Decision` in Python fails the JS tests instead of arriving as an exit code the
+client maps to nothing. See `clients/js/README.md`.
+
+---
+
+## The contract command
+
+```bash
+neuraxis --json contract
+```
+
+Emits the decision/exit-code table, the permitting decision, obligations, risks
+and accepted request fields. Non-Python clients assert against this rather than
+keeping their own copy — a copy is a thing that can silently go stale, and a
+stale exit-code table in a governance client means an unrecognised block read
+as no block.
+
 ---
 
 ## Wiring it into CI
@@ -239,7 +267,7 @@ neuraxis attest --control GV-08 --result "$RESULT" \
 python -m pytest -q --cov=neuraxis --cov-report=term-missing
 ```
 
-157 tests, 94% coverage. The suite includes explicit **positive controls** — `test_allows_when_everything_holds`, `test_ratified_non_delegable_capability_is_allowed`, `test_guard_decorator_runs_the_body_on_allow`. Without them, a gate that denied unconditionally would pass every other assertion in the suite. `tests/test_failclosed.py` asserts that faults become denials rather than implicit allows.
+**Python:** 174 tests, 94% coverage. **JS client:** 19 contract tests. The suite includes explicit **positive controls** — `test_allows_when_everything_holds`, `test_ratified_non_delegable_capability_is_allowed`, `test_guard_decorator_runs_the_body_on_allow`. Without them, a gate that denied unconditionally would pass every other assertion in the suite. `tests/test_failclosed.py` asserts that faults become denials rather than implicit allows.
 
 ---
 

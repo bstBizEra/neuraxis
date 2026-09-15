@@ -42,6 +42,32 @@ jobs:
       - name: Provider coverage
         run: neuraxis providers
 
+  js-client:
+    name: js client contract / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # The client is tested against the real CLI, so the gate must be
+      # installed. A mocked gate would only prove the client agrees with an
+      # idea of the gate, which is the drift the contract command prevents.
+      - name: Install the gate
+        run: python -m pip install -e .
+
+      - name: Contract tests
+        working-directory: clients/js
+        run: npm test
+
   gate-self-check:
     name: gate denies by default
     runs-on: ubuntu-latest

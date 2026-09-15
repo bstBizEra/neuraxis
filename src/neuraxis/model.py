@@ -14,6 +14,14 @@ from typing import Any, Mapping, Sequence
 
 UTC = timezone.utc
 
+#: Fields a non-Python caller may send. Exposed through `neuraxis contract`
+#: so clients assert against it instead of hard-coding their own copy.
+REQUEST_REQUIRED_FIELDS = ("intent", "identity", "role", "capability", "scope")
+REQUEST_OPTIONAL_FIELDS = (
+    "risk", "performer", "verifier", "rollback_tested", "ratification_ref",
+)
+REQUEST_FIELDS = REQUEST_REQUIRED_FIELDS + REQUEST_OPTIONAL_FIELDS
+
 
 def now_utc() -> datetime:
     """Single clock source, so tests can reason about freshness deterministically."""
@@ -153,7 +161,7 @@ class AuthorityRequest:
     requested_at: datetime = field(default_factory=now_utc)
 
     def __post_init__(self) -> None:
-        for name in ("intent", "identity", "role", "capability", "scope"):
+        for name in REQUEST_REQUIRED_FIELDS:
             if not str(getattr(self, name)).strip():
                 raise ValueError(f"AuthorityRequest.{name} must be non-empty")
 
@@ -164,10 +172,7 @@ class AuthorityRequest:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "AuthorityRequest":
         """Parse the JSON contract used by non-Python callers (maw-js agents)."""
-        known = {
-            "intent", "identity", "role", "capability", "scope", "risk",
-            "performer", "verifier", "rollback_tested", "ratification_ref",
-        }
+        known = set(REQUEST_FIELDS)
         unknown = set(data) - known - {"requested_at"}
         if unknown:
             raise ValueError(f"unknown request fields: {sorted(unknown)}")

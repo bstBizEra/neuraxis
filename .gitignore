@@ -23,3 +23,6 @@ htmlcov/
 
 # Files delivered into this folder by the Claude desktop app
 Claude outputs/
+# Node
+node_modules/
+npm-debug.log*

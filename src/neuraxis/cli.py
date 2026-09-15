@@ -28,7 +28,16 @@ from . import __version__
 from .attestation import AttestationStore
 from .errors import NeuraxisError
 from .gate import GovernanceGate
-from .model import Attestation, AuthorityRequest, Decision, Risk, now_utc
+from .model import (
+    REQUEST_OPTIONAL_FIELDS,
+    REQUEST_REQUIRED_FIELDS,
+    Attestation,
+    AuthorityRequest,
+    Decision,
+    Obligation,
+    Risk,
+    now_utc,
+)
 from .providers import ProviderOutcome, get_provider, providers_for, run_provider
 from .providers.registry import UnknownProviderError, coverage
 from .registry import load_registry
@@ -310,6 +319,39 @@ def cmd_score(args: argparse.Namespace) -> int:
     return EXIT_OK if permitted else EXIT_BY_DECISION[Decision.DENY]
 
 
+def cmd_contract(args: argparse.Namespace) -> int:
+    """Emit the CLI contract as JSON.
+
+    Non-Python clients assert their own tables against this instead of
+    hard-coding a copy. Adding a Decision in Python then breaks their tests
+    loudly, rather than producing an exit code they silently map to nothing —
+    and "maps to nothing" in a governance gate means "not recognised as a
+    block".
+    """
+    payload = {
+        "version": __version__,
+        "ok_exit": EXIT_OK,
+        "error_exit": EXIT_ERROR,
+        "decisions": {d.value: EXIT_BY_DECISION[d] for d in Decision},
+        "permitting_decisions": [d.value for d in Decision if d.permits_action],
+        "obligations": [o.value for o in Obligation],
+        "risks": [r.value for r in Risk],
+        "request_fields": {
+            "required": list(REQUEST_REQUIRED_FIELDS),
+            "optional": list(REQUEST_OPTIONAL_FIELDS),
+        },
+    }
+    lines = [f"neuraxis contract v{payload['version']}", "  decisions:"]
+    lines += [
+        f"    {name:<20} exit {code}"
+        + ("   <- the only permitting decision" if name in payload["permitting_decisions"] else "")
+        for name, code in payload["decisions"].items()
+    ]
+    lines.append(f"    {'(error)':<20} exit {EXIT_ERROR}")
+    _emit(payload, as_json=args.json, text="\n".join(lines))
+    return EXIT_OK
+
+
 def cmd_providers(args: argparse.Namespace) -> int:
     """Show provider coverage of the control set — a live dependency view."""
     registry = load_registry(args.registry)
@@ -448,6 +490,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="run this provider and record its result instead of asserting one by hand",
     )
     p.set_defaults(func=cmd_attest)
+
+    p = sub.add_parser("contract", help="machine-readable CLI contract for non-Python clients")
+    p.set_defaults(func=cmd_contract)
 
     p = sub.add_parser("providers", help="provider coverage of the control set")
     p.set_defaults(func=cmd_providers)

@@ -1,6 +1,6 @@
 # neuraxis — Roadmap
 
-**Current:** v0.3.0 — gate core, per-control windows, provider harness. 157 tests, 94% coverage.
+**Current:** v0.5.0 — gate core, per-control windows, provider harness, Node client. 174 Python tests + 19 JS contract tests.
 **To:** v1.0 (operational governance layer for BST-SA)
 **Governing constraint:** one task at a time, CI green = done.
 
@@ -9,8 +9,9 @@
 | v0.1 gate core | **shipped** |
 | v0.2 per-control windows | **shipped** |
 | v0.3 provider harness | **shipped** — 1 of 10 controls wired |
+| v0.3.1 Windows portability | **shipped** |
 | v0.4 loop contracts | blocked on T3/T4 |
-| v0.5 maw-js client | ready to start |
+| v0.5 maw-js client | **shipped** |
 | v0.6 service mode | not until a caller needs it |
 | v1.0 hardening | after v0.4 |
 
@@ -121,9 +122,7 @@ The Execution → Learning boundary (ILR-001 §6.5), which is what makes GV-03 a
 
 ---
 
-## v0.5 — maw-js client and L0 integration — READY TO START
-
-No unmet dependency. This is the next item that can be finished end to end.
+## v0.5 — maw-js client — SHIPPED (L0 integration outstanding)
 
 **Why:** the CLI contract exists; BST-SA agents should not be shelling out by hand.
 
@@ -133,9 +132,17 @@ No unmet dependency. This is the next item that can be finished end to end.
 - Verdict obligations surfaced to the agent as required follow-through
 
 **Acceptance**
-- [ ] JS client contract tests run against the real CLI, not a mock
-- [ ] A new decision value added to the Python enum fails the JS tests rather than passing silently
-- [ ] One BST-SA workstream gated end to end
+- [x] JS client contract tests run against the real CLI, not a mock
+- [x] A new decision value added to the Python enum fails the JS tests rather than passing silently — verified by temporarily adding a sixth `Decision` and confirming the suite went red
+- [x] `neuraxis contract` publishes the table so no client keeps its own copy
+- [x] Unrecognised exit codes and unknown decisions throw rather than being read as passes
+- [x] CI runs the client against the real gate on Linux and Windows
+- [ ] L0 integration: lease check and GV-02 asked once — **blocked on the L0 lease API**
+- [ ] One BST-SA workstream gated end to end — **needs a workstream to be chosen**
+
+The client re-implements no rule. Band resolution, freshness, verifier
+independence and the non-delegable floor stay in the Python gate; two
+implementations of a governance decision is two governance decisions.
 
 ---
 
