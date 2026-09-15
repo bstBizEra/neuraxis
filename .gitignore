@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+
+# Test and coverage output
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Runtime state - never source.
+# Attestations and task logs are operational records. Under KBS-001 the
+# authoritative evidence sink is WORM-backed; anything here is a local mirror,
+# and committing one would make a stale snapshot look authoritative.
+*.jsonl
+
+# Files delivered into this folder by the Claude desktop app
+Claude outputs/

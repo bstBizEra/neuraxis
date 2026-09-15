@@ -1,0 +1,70 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is not optional here. v0.3.1 fixed two defects that appear
+        # only on Windows - a UTF-8 BOM in a PowerShell-written file, and
+        # em-dashes against a legacy console code page. Both failed closed,
+        # which is the hardest kind of defect to notice.
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+
+      - name: Test
+        run: python -m pytest -q --cov=neuraxis --cov-report=term-missing
+
+      - name: Validate registry
+        run: neuraxis validate
+
+      - name: Provider coverage
+        run: neuraxis providers
+
+  gate-self-check:
+    name: gate denies by default
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e .
+
+      # With no attestations on file, every capability must be refused. If this
+      # step ever succeeds, the gate has started failing open and nothing else
+      # in the suite is meaningful.
+      - name: Refuse a capability with nothing attested
+        run: |
+          set +e
+          neuraxis --attestations /nonexistent.jsonl gate \
+            --capability IL-06 --identity ci --role drafter \
+            --intent "fail-open check" --verifier other --rollback-tested
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ]; then
+            echo "::error::gate ALLOWED with zero attestations - failing open"
+            exit 1
+          fi
+          echo "gate refused as required (exit $code)"

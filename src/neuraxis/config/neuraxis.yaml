@@ -1,0 +1,124 @@
+# BST Neuraxis — Intelligent Loop Registry (ILR-001)
+# This file is KERNEL under KBS-001 (K-04 family). Agents hold no write path to it.
+framework: bst-neuraxis
+version: "0.1"
+principle: governed-evolution
+
+# max_age is each control's own attestation window, defaulting to
+# enforcement.attestation_max_age when omitted. Windows are set by the cost of
+# the check, not by uniformity: demanding daily proof of an expensive drill
+# guarantees the drill gets stubbed, and a stubbed drill is a vacuous check.
+governance:
+  GV-01: { name: identity,      attestation: kbs-001/probe,             max_age: 24h }
+  GV-02: { name: authority,     attestation: l0/lease-audit,            max_age: 24h }
+  GV-03: { name: evidence,      attestation: kbs-001/sink-worm,         max_age: 24h }
+  GV-04: { name: verification,  attestation: nx/verifier-independence,  max_age: 7d }
+  GV-05: { name: reversibility, attestation: nx/rollback-drill,         max_age: 30d }
+  GV-06: { name: containment,   attestation: l0/scope-budget,           max_age: 7d }
+  GV-07: { name: ratification,  attestation: badf/gate-log,             max_age: 7d }
+  GV-08: { name: attestation,   attestation: kbs-001/external-probe,    max_age: 24h }
+  GV-09: { name: provenance,    attestation: nx/lesson-provenance,      max_age: 7d }
+  GV-10: { name: kill-switch,   attestation: nx/killswitch-drill,       max_age: 30d }
+
+capabilities:
+  IL-01: { name: Thinkable,          band: BAND-A, question: "What does this situation mean?" }
+  IL-02: { name: Observable,         band: BAND-A, question: "What is actually happening?" }
+  IL-03: { name: Context-Aware,      band: BAND-A, question: "What information matters now?" }
+  IL-04: { name: Goal-Aware,         band: BAND-A, question: "What outcome am I trying to achieve?" }
+  IL-05: { name: Planable,           band: BAND-A, question: "How can I reach the goal?" }
+  IL-06: { name: Actionable,         band: BAND-B, question: "What action should I perform now?" }
+  IL-07: { name: Self-Checking,      band: BAND-B, question: "Did I perform the action correctly?" }
+  IL-08: { name: Self-Correcting,    band: BAND-B, question: "What should I fix?" }
+  IL-14: { name: Self-Deciding,      band: BAND-B, question: "Which permitted option should I choose?" }
+  IL-15: { name: Self-Prioritizing,  band: BAND-B, question: "What should be done first?" }
+  IL-16: { name: Self-Planning,      band: BAND-B, question: "Does the current plan still make sense?" }
+  IL-09: { name: Reflective,         band: BAND-C, question: "Why did this happen?" }
+  IL-10: { name: Memory-Enabled,     band: BAND-C, question: "What should be remembered?" }
+  IL-11: { name: Self-Learning,      band: BAND-C, question: "What can I learn from this?" }
+  IL-12: { name: Adaptive,           band: BAND-C, question: "Should I approach this differently?" }
+  IL-17: { name: Self-Orchestrating, band: BAND-D, question: "Who or what should perform each step?" }
+  IL-18: { name: Self-Coordinating,  band: BAND-D, question: "How should multiple actors collaborate?" }
+  IL-19: { name: Self-Monitoring,    band: BAND-E, question: "Is the system still operating correctly?" }
+  IL-20: { name: Self-Diagnosing,    band: BAND-E, question: "What is actually causing the problem?" }
+  IL-21: { name: Self-Healing,       band: BAND-E, question: "Can I safely recover?" }
+  IL-22: { name: Self-Optimizing,    band: BAND-E, question: "Can the same goal be achieved better?" }
+  IL-23: { name: Self-Calibrating,   band: BAND-E, question: "How certain am I, and is that certainty justified?" }
+  IL-24: { name: Self-Auditing,      band: BAND-F, question: "Can my behaviour be independently verified?" }
+  IL-25: { name: Self-Governing,     band: BAND-F, question: "Am I authorized to do this?" }
+  IL-26: { name: Self-Securing,      band: BAND-F, question: "Is this action trustworthy and permitted?" }
+  IL-27: { name: Self-Explaining,    band: BAND-F, question: "Can another actor understand and verify this decision?" }
+  # IL-13 sits in BAND-G, not BAND-C: self-improvement is system modification,
+  # not learning. Its original placement beside IL-11/IL-12 is what leads teams
+  # to ship it before assurance exists.
+  IL-13: { name: Self-Improving,     band: BAND-G, question: "How can my operating method improve?" }
+  IL-28: { name: Self-Simulating,    band: BAND-G, question: "What happens if I choose A, B, or C?" }
+  IL-29: { name: Self-Predicting,    band: BAND-G, question: "What is likely to happen next?" }
+  IL-30: { name: Self-Experimenting, band: BAND-G, question: "Can I safely test a better method?" }
+  IL-31: { name: Self-Architecting,  band: BAND-G, question: "Should the system itself be reorganized?" }
+  IL-32: { name: Self-Evolving,      band: BAND-G, question: "What should the next version of me look like?" }
+  IL-33: { name: Governed Evolution, band: BAND-G, question: "Is this evolution demonstrably better and authorized?" }
+
+bands:
+  BAND-A:
+    title: Cognition
+    requires: [GV-01, GV-03]
+    depends_on: []
+  BAND-B:
+    title: Governed Execution
+    requires: [GV-01, GV-02, GV-03, GV-04, GV-05]
+    depends_on: [BAND-A]
+  BAND-C:
+    title: Memory & Learning
+    requires: [GV-01, GV-02, GV-03, GV-04, GV-05, GV-09]
+    depends_on: [BAND-B]
+  BAND-D:
+    title: Coordination
+    requires: [GV-01, GV-02, GV-03, GV-04, GV-05, GV-06]
+    depends_on: [BAND-B]
+  BAND-E:
+    title: Operations
+    requires: [GV-01, GV-02, GV-03, GV-04, GV-05, GV-06, GV-10]
+    depends_on: [BAND-B]
+  BAND-F:
+    title: Assurance
+    requires: [GV-01, GV-02, GV-03, GV-04, GV-05, GV-06, GV-08, GV-09, GV-10]
+    depends_on: [BAND-C, BAND-D, BAND-E]
+  BAND-G:
+    title: Governed Evolution
+    requires: [GV-01, GV-02, GV-03, GV-04, GV-05, GV-06, GV-07, GV-08, GV-09, GV-10]
+    depends_on: [BAND-F]
+
+authority:
+  # Which roles may exercise which bands. A role absent from a band's grant list
+  # yields DELEGATE (another role holds it) or DENY (no role does).
+  role_grants:
+    operator:   [BAND-A, BAND-B, BAND-C, BAND-D, BAND-E, BAND-F, BAND-G]
+    cortex:     [BAND-A, BAND-B, BAND-C]
+    drafter:    [BAND-A, BAND-B]
+    motor:      [BAND-A, BAND-B, BAND-D]
+    immune:     [BAND-A, BAND-B, BAND-E, BAND-F]
+    hippocampus: [BAND-A, BAND-C]
+  # Capabilities that always require a human ratification reference, whatever
+  # the band state. These are the non-delegable floor (K-05).
+  non_delegable:
+    - IL-31   # Self-Architecting
+    - IL-32   # Self-Evolving
+    - IL-33   # Governed Evolution
+  # Risk at or above this rank escalates even when the band is attained.
+  escalate_at_risk: CRITICAL
+
+enforcement:
+  mode: l0-mechanical
+  on_missing_attestation: deny
+  attestation_max_age: 24h
+
+scorecard:
+  # Minimum per-term value required to operate at a given band.
+  thresholds:
+    BAND-A: { R: 0.0,  V: 0.0, G: 1.0 }
+    BAND-B: { R: 0.60, V: 0.5, G: 1.0 }
+    BAND-C: { R: 0.70, V: 0.5, G: 1.0 }
+    BAND-D: { R: 0.70, V: 0.5, G: 1.0 }
+    BAND-E: { R: 0.70, V: 0.7, G: 1.0 }
+    BAND-F: { R: 0.80, V: 0.9, G: 1.0 }
+    BAND-G: { R: 0.85, V: 1.0, G: 1.0 }

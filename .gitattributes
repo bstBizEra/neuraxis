@@ -1,0 +1,6 @@
+# Normalise line endings in the repo; check out native.
+# The suite runs on Windows and Linux in CI, and mixed endings would make
+# every cross-platform diff unreadable.
+* text=auto eol=lf
+*.png binary
+*.gz binary
