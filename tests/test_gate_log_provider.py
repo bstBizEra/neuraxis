@@ -109,7 +109,7 @@ def test_ratified_after_merge(tmp_path):
         )
     ])
     assert run.attests is False
-    assert "ratified after merge" in run.result.detail
+    assert "ratified at or after merge" in run.result.detail
 
 
 def test_ratified_before_proposed(tmp_path):

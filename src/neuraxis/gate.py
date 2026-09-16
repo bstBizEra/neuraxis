@@ -119,7 +119,10 @@ class GovernanceGate:
             capability.id in self.registry.non_delegable
             or Obligation.HUMAN_RATIFICATION in obligations
         )
-        if needs_ratification and not request.ratification_ref:
+        # Stripped: a whitespace-only reference is not a reference. The gate
+        # cannot yet verify that the reference resolves to a real ratification
+        # record — see "known limits" in the README — but it can refuse a blank.
+        if needs_ratification and not (request.ratification_ref or "").strip():
             why = (
                 f"{capability.id} is on the non-delegable floor"
                 if capability.id in self.registry.non_delegable
@@ -162,9 +165,17 @@ class GovernanceGate:
     def _check_verifier_independence(
         self, request: AuthorityRequest, capability_id: str, band_id: str
     ) -> Verdict | None:
-        """NX-INV-2. Returns a DENY verdict, or None if independence holds."""
-        performer = request.effective_performer
-        if request.verifier is None:
+        """NX-INV-2. Returns a DENY verdict, or None if independence holds.
+
+        Compared against every identity the request claims, not just
+        `performer`: `performer` is requester-supplied, so naming a fictitious
+        performer would otherwise let a caller verify its own work under its
+        real identity. Comparison is case-folded and stripped, because
+        `"agent-x "` and `"Agent-X"` are the same principal to everyone except
+        a raw `==`.
+        """
+        verifier = (request.verifier or "").strip()
+        if not verifier:
             return self._deny(
                 capability_id,
                 band_id,
@@ -173,12 +184,14 @@ class GovernanceGate:
                     "NX-INV-2: verification reliability is zero when unspecified",
                 ],
             )
-        if request.verifier == performer:
+        claimed = {i.casefold() for i in request.claimed_identities}
+        if verifier.casefold() in claimed:
             return self._deny(
                 capability_id,
                 band_id,
                 [
-                    f"verifier {request.verifier!r} is the performer",
+                    f"verifier {verifier!r} is one of the identities this request claims "
+                    f"({', '.join(sorted(request.claimed_identities))})",
                     "NX-INV-2: V = 0 when performer and verifier are the same identity",
                 ],
             )

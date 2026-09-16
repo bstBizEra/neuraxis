@@ -25,7 +25,7 @@ def read_jsonl(path: Path, *, what: str) -> Iterable[dict[str, Any]]:
     """
     if not path.is_file():
         raise FileNotFoundError(f"{what} not found at {path}")
-    for lineno, line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), start=1):
+    for lineno, line in enumerate(path.read_text(encoding="utf-8-sig").split("\n"), start=1):
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -230,17 +230,29 @@ class GateLogRatificationProvider(Provider):
                 breaches.append(str(exc))
                 continue
 
-            if ratified > merged:
+            if ratified >= merged:
                 # The check worth building for: a gate that still runs but has
                 # become a stamp on a completed act rather than an authorisation
                 # of it. It looks green the whole way.
+                #
+                # `>=`, not `>`: ratification at the same instant as the merge
+                # is not authorisation preceding the act, it is both emitted by
+                # one automated step.
                 breaches.append(
-                    f"{change}: ratified after merge "
-                    f"({ratified.isoformat()} > {merged.isoformat()})"
+                    f"{change}: ratified at or after merge "
+                    f"({ratified.isoformat()} >= {merged.isoformat()})"
                 )
                 continue
 
             proposed_raw = record.get("proposed_at")
+            if "proposed_at" in record and not proposed_raw:
+                # Present-but-falsy skipped the ordering check entirely, so ""
+                # and 0 were a free pass while "garbage" was a breach. That is
+                # the wrong way round.
+                breaches.append(
+                    f"{change}: proposed_at is present but empty ({proposed_raw!r})"
+                )
+                continue
             if proposed_raw:
                 try:
                     proposed = parse_ts(proposed_raw, field="proposed_at", where=change)

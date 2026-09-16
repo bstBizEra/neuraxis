@@ -1,15 +1,21 @@
 """L0 lease-log providers — GV-02 authority and GV-06 containment.
 
-Both read one log with two record kinds. The join between them is where the
-audits get their teeth: a tally emitted by L0 would be L0 counting its own
-compliance, which is the performer-verifies-itself failure moved to the
-evidence layer. These providers recompute from the raw records instead.
+Both read one log with two record kinds, and both recompute from the raw
+records rather than trusting a compliance tally L0 emits about itself — that
+would be performer-verifies-itself moved to the evidence layer.
+
+GV-02 joins actions to leases; that join is where its checks get their teeth.
+**GV-06 does not join** — it audits lease records alone, so a lease reporting
+low consumption against many actions is not contradicted by the action count.
+Closing that needs a consumption-per-action contract, which the current record
+shape does not carry.
 
 Record contract: docs/GV-02-GV-06-lease-log-contract.md
 """
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
@@ -244,14 +250,20 @@ class LeaseContainmentProvider(_LeaseLogProvider):
             lid = lease.get("lease_id") or "<unidentified>"
             principal = lease.get("principal")
             ceilings = lease.get("ceilings")
-            consumed = lease.get("consumed") or {}
+            # No `or {}` here: it would coerce [], 0, "" and None into an empty
+            # dict and make the type check below unreachable, so a lease that
+            # reported nothing would pass as "consumed nothing".
+            consumed = lease.get("consumed")
 
             if not isinstance(ceilings, dict) or not ceilings:
                 # Containment that declares no limit bounds nothing.
                 breaches.append(f"lease {lid}: unbounded grant, no ceilings declared")
                 continue
             if not isinstance(consumed, dict):
-                breaches.append(f"lease {lid}: 'consumed' is not an object")
+                breaches.append(
+                    f"lease {lid}: 'consumed' is {type(consumed).__name__}, not an object; "
+                    "absent consumption is not zero consumption"
+                )
                 continue
 
             amended_by = lease.get("ceilings_amended_by")
@@ -260,22 +272,40 @@ class LeaseContainmentProvider(_LeaseLogProvider):
                 breaches.append(f"lease {lid}: ceilings widened by the principal they bound")
                 continue
 
-            for metric, used in consumed.items():
-                limit = ceilings.get(metric)
-                if limit is None:
+            # Iterate the CEILINGS, not the consumption. Iterating consumption
+            # means a lease that declares a ceiling and reports no usage for it
+            # passes vacuously — under-reporting was undetectable.
+            for metric, limit in ceilings.items():
+                if metric not in consumed:
+                    breaches.append(
+                        f"lease {lid}: ceiling declared for {metric!r} but no consumption "
+                        "reported; an unreported resource is not an unused one"
+                    )
+                    continue
+                used = consumed[metric]
+                try:
+                    used_f, limit_f = float(used), float(limit)
+                except (TypeError, ValueError):
+                    breaches.append(f"lease {lid}: {metric} is not numeric ({used!r} vs {limit!r})")
+                    continue
+                if not (math.isfinite(used_f) and math.isfinite(limit_f)):
+                    # NaN defeats every comparison silently, and json.loads
+                    # accepts bare NaN/Infinity. `1e999` parses to inf.
+                    breaches.append(
+                        f"lease {lid}: {metric} is not finite ({used!r} vs {limit!r}); "
+                        "a non-finite bound is not a bound"
+                    )
+                    continue
+                if used_f > limit_f:
+                    # The ceiling was recorded and not applied: advisory, not
+                    # enforced. KBS-INV-3, measured.
+                    breaches.append(f"lease {lid}: {metric} consumed {used} over ceiling {limit}")
+
+            for metric in consumed:
+                if metric not in ceilings:
                     breaches.append(
                         f"lease {lid}: consumed {metric!r} with no ceiling declared for it"
                     )
-                    continue
-                try:
-                    if float(used) > float(limit):
-                        # The ceiling was recorded and not applied: advisory,
-                        # not enforced. KBS-INV-3, measured.
-                        breaches.append(
-                            f"lease {lid}: {metric} consumed {used} over ceiling {limit}"
-                        )
-                except (TypeError, ValueError):
-                    breaches.append(f"lease {lid}: {metric} is not numeric ({used!r} vs {limit!r})")
 
         if breaches:
             return ProviderResult.failed(
@@ -286,7 +316,7 @@ class LeaseContainmentProvider(_LeaseLogProvider):
             )
         return ProviderResult.passed(
             evidence_ref,
-            f"all {len(leases)} lease(s) declared ceilings covering every resource "
-            f"consumed, and none were exceeded",
+            f"all {len(leases)} lease(s) declared ceilings and reported consumption for "
+            f"every one, none exceeded, all finite",
             breaches=0, sampled=len(leases),
         )

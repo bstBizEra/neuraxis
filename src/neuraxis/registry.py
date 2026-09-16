@@ -168,6 +168,13 @@ def load_registry(path: str | Path | None = None) -> Registry:
     bands: dict[str, Band] = {}
     for bid, body in _require(raw, "bands", "root").items():
         requires = tuple(body.get("requires", ()))
+        if not requires:
+            # A band with no required controls is unconditionally attained,
+            # which makes it a capability grant wearing a band's name.
+            raise RegistryError(
+                f"band {bid} requires no controls; a band that requires nothing "
+                "licenses everything and is not a band"
+            )
         for control in requires:
             if control not in controls:
                 raise UnknownControlError(f"band {bid} requires undefined control {control}")

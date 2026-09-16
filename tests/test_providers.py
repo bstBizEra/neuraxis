@@ -272,12 +272,41 @@ def test_unknown_provider_name_raises():
         get_provider("nx/does-not-exist")
 
 
+class _ForUnwired(_Base):
+    """A real provider for a control that ships as an UNWIRED stub."""
+
+    control = "GV-01"
+    name = "test/real-kernel-probe"
+
+
+def test_registering_over_a_wired_builtin_is_refused():
+    """Extras run after builtins, so a shadow's attestation would win."""
+    with pytest.raises(NeuraxisError, match="wired builtin"):
+        register("test/shadow-gv04", lambda **_: _Base())
+    assert "test/shadow-gv04" not in PROVIDERS
+
+
+def test_registering_a_builtin_name_is_refused():
+    with pytest.raises(NeuraxisError, match="is a builtin"):
+        register("nx/verifier-independence", lambda **_: _Base())
+
+
+def test_registering_over_an_unwired_stub_replaces_it():
+    """The supported extension path: wire a control this package cannot."""
+    register("test/real-kernel-probe", lambda **_: _ForUnwired())
+    try:
+        covering = [p for p in providers_for("GV-01")]
+        assert [p.name for p in covering] == ["test/real-kernel-probe"]
+        assert not isinstance(covering[0], UnwiredProvider)
+    finally:
+        PROVIDERS.pop("test/real-kernel-probe", None)
+
+
 def test_registering_a_duplicate_name_is_refused():
-    """Silently replacing a real check with a permissive one is an attack path."""
     name = "test/duplicate-guard"
-    register(name, lambda **_: _Base())
+    register(name, lambda **_: _ForUnwired())
     try:
         with pytest.raises(NeuraxisError, match="already registered"):
-            register(name, lambda **_: _Base())
+            register(name, lambda **_: _ForUnwired())
     finally:
         PROVIDERS.pop(name, None)

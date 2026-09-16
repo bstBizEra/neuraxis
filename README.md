@@ -1,6 +1,6 @@
 # neuraxis
 
-**BST Neuraxis — Intelligent Loop Registry and Governance Gate.** Reference implementation of ILR-001. **v0.5.2.**
+**BST Neuraxis — Intelligent Loop Registry and Governance Gate.** Reference implementation of ILR-001. **v0.6.0.**
 
 Capability is licensed by the governance controls paired to it. A capability whose controls do not hold a current passing attestation is denied — mechanically, at the call site, not by instruction to an agent.
 
@@ -272,10 +272,35 @@ neuraxis attest --control GV-08 --result "$RESULT" \
 
 ---
 
+## What an adversarial review found
+
+v0.6.0 is the result of attacking v0.5.2 from a fresh context. Every fix below
+corresponds to a confirmed exploit, and each has a regression test in
+`tests/test_hardening.py`.
+
+| Fixed | Was |
+|---|---|
+| Attestation ties resolve to FAIL | An **appended** PASS with an equal timestamp overtook a FAIL — the one poisoning attack that survives an append-only WORM sink, since it requires no edit at all |
+| Readers `split("\n")` | `splitlines()` also breaks on `\v \f \x85 \u2028`, which are legal inside a JSON string and invisible to `wc`, `diff` and any per-line hasher — the loader and an auditor saw different record sets |
+| Verifier compared to every claimed identity, stripped and case-folded | Naming a fictitious `performer` bought self-verification; `"agent-x "`, `"Agent-X"` and `" "` all passed |
+| `rollback_tested` must be a JSON boolean | `"rollback_tested": "false"` is a non-empty string, so spelling the word satisfied NX-INV-3 |
+| GV-06 iterates ceilings, requires `consumed` to be a dict, rejects non-finite | Omitting `consumed` passed; `{}`, `[]`, `0` passed; `NaN` lost every comparison silently |
+| GV-07 treats `ratified >= merged` as a breach | A stamp emitted at the merge instant passed the check built to catch rubber-stamping |
+| GV-07 rejects a present-but-empty `proposed_at` | `""` and `0` skipped the ordering check while `"garbage"` was a breach — backwards |
+| A band with `requires: []` is rejected at load | It was unconditionally attained: a capability grant wearing a band's name |
+| `register()` cannot shadow a wired builtin | Builtins were not in `PROVIDERS`, so the name guard missed them; extras run last, so the shadow's attestation always won |
+
 ## Honest limits
 
 - **This enforces at the call site, not at the credential.** A component that never calls the gate is not governed by it. Mechanical enforcement of the boundary itself is KBS-001's job (lease scope, kernel separation); Neuraxis assumes that boundary already holds.
+- **Omission is undetectable, and it is the limit that matters.** Every provider audits the records present in a file and has no way to know which records are absent. There is no sequence number, record count, hash chain or external anchor. A one-line fabricated log produces the same PASS as a complete export. So each wired provider proves a *conditional* — *if* this file is the complete and faithful record, *then* the property held — and nothing here establishes the antecedent.
+
+  **GV-03 (WORM evidence sink) and GV-08 (external attestation) are exactly the two unwired controls that would establish it.** Until they land, wiring more providers increases the surface that can be forged without increasing what is actually proven. Read "4 of 10 wired" as four well-specified audits on an unauthenticated substrate, not as four controls in force.
 - **Six of ten controls have no real provider yet.** `neuraxis providers` says which and why. Until they are wired, those controls can only be attested by hand — which is an assertion, not evidence.
+- **Identity, role and risk are accepted as asserted.** `role` is a free string on the request; nothing binds it to `identity`, and `identity` is never authenticated. `risk` defaults to LOW and is requester-supplied, so `escalate_at_risk` escalates only requests that volunteer being critical. Binding these is L0's job, not the gate's.
+- **A registry or evidence path is whatever the caller passes.** `--registry` accepts any file. Process-level integrity — which binary, which config, which environment — is outside this package and belongs to the kernel boundary.
+- **Three obligations are labels, not controls.** `emit-evidence-record`, `bounded-scope` and `provenance-binding` name duties the caller owes; nothing verifies they were discharged, because no verdict is written back for a later cycle to audit.
+- **The vacuity probe is provider testimony.** It proves a probe exists and reports failure, not that the probe exercised `check()`. No in-process harness can close that.
 - **Attestations are as good as the checks that produce them.** The harness enforces the four rules mechanically, but it cannot tell whether a provider is auditing the right thing. It catches a check that cannot fail; it does not catch a check that measures the wrong property.
 - **The JSONL attestation file is a local mirror, not an audit trail.** Under KBS-001 the authoritative sink is WORM-backed. Do not treat this file as evidence of record.
 - **Band thresholds in the registry are a starting point**, not calibrated values. Set them from your own measurements.

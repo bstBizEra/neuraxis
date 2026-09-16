@@ -1,7 +1,13 @@
 """Core value types for BST Neuraxis.
 
-All types are frozen. A verdict, once produced, is a record — it is written to
-the evidence sink and must not be mutated by anything downstream.
+All types are frozen: a verdict, once produced, must not be mutated by anything
+downstream.
+
+**Nothing in this package writes a verdict to the evidence sink.** That edge
+does not exist yet, which is why the obligations attached to an ALLOW are
+advisory rather than enforced — no later provider cycle can observe that the
+ALLOW was issued, so none can detect that its obligations went undischarged.
+See "known limits" in the README.
 """
 
 from __future__ import annotations
@@ -57,9 +63,13 @@ class Risk(str, Enum):
 class Obligation(str, Enum):
     """Duties attached to an ALLOW.
 
-    An obligation is not advice. The caller that acts on an ALLOW carrying
-    EMIT_EVIDENCE without writing an evidence record has violated GV-03, and
-    the next attestation cycle should fail.
+    Three are checked at the gate: INDEPENDENT_VERIFICATION, TESTED_ROLLBACK
+    and HUMAN_RATIFICATION. The rest — EMIT_EVIDENCE, BOUNDED_SCOPE,
+    PROVENANCE_BINDING — are **labels, not controls**: they name a duty the
+    caller owes, and nothing in this package verifies it was discharged,
+    because no verdict is ever written back for a later cycle to audit.
+
+    Stated plainly here because the gap is the kind a reader assumes away.
     """
 
     EMIT_EVIDENCE = "emit-evidence-record"
@@ -113,6 +123,11 @@ class Attestation:
     `result` False is recorded, not discarded: a failing attestation is the
     signal that a band must close, and silently dropping it would let a band
     stay open on a stale pass.
+
+    `provenance` distinguishes a result a provider established from one a human
+    asserted. Without it the two are indistinguishable on disk, and a typed
+    assertion satisfies a control that has a real check — which is the whole
+    mechanism defeated by a shell loop.
     """
 
     control: str
@@ -120,10 +135,15 @@ class Attestation:
     issued_at: datetime
     issuer: str
     evidence_ref: str
+    provenance: str = "manual"
 
     def __post_init__(self) -> None:
         if self.issued_at.tzinfo is None:
             raise ValueError(f"attestation {self.control}: issued_at must be tz-aware")
+        if self.provenance not in ("provider", "manual"):
+            raise ValueError(
+                f"attestation {self.control}: provenance must be 'provider' or 'manual'"
+            )
 
     def is_current(self, max_age: timedelta, *, at: datetime | None = None) -> bool:
         """Current means: passing, not expired, and not future-dated.
@@ -167,7 +187,19 @@ class AuthorityRequest:
 
     @property
     def effective_performer(self) -> str:
-        return self.performer or self.identity
+        return (self.performer or self.identity).strip()
+
+    @property
+    def claimed_identities(self) -> tuple[str, ...]:
+        """Every principal this request claims to act as.
+
+        Verifier independence is checked against all of them. Comparing only
+        against `performer` lets a requester name a fictitious performer and
+        verify its own work under its real identity.
+        """
+        return tuple(
+            {self.identity.strip(), self.effective_performer} - {""}
+        )
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "AuthorityRequest":
@@ -179,6 +211,15 @@ class AuthorityRequest:
         payload = {k: data[k] for k in known if k in data}
         if "risk" in payload:
             payload["risk"] = Risk(str(payload["risk"]).upper())
+        if "rollback_tested" in payload:
+            # Strict. `"false"` is a non-empty string and therefore truthy, so
+            # a JSON caller could satisfy NX-INV-3 by spelling the word.
+            value = payload["rollback_tested"]
+            if not isinstance(value, bool):
+                raise ValueError(
+                    f"rollback_tested must be a JSON boolean, got {type(value).__name__} "
+                    f"({value!r}); a truthy string is not a tested rollback"
+                )
         return cls(**payload)  # type: ignore[arg-type]
 
 

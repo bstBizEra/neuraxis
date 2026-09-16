@@ -20,8 +20,10 @@ from .model import Attestation, now_utc
 class AttestationStore:
     """In-memory store keyed by control id, retaining only the newest record.
 
-    Newest-wins is the correct policy: a fresh FAIL must supersede an older
-    PASS, which a max-of-passes policy would hide.
+    Newest-wins, and **ties go to FAIL**. Equal timestamps otherwise resolve by
+    insertion order, so on an append-only log a later PASS would supersede an
+    earlier FAIL without editing anything — the one poisoning attack that
+    survives a WORM sink. At a tie, fail-closed means the denial wins.
     """
 
     def __init__(self, attestations: Iterable[Attestation] = ()) -> None:
@@ -31,7 +33,11 @@ class AttestationStore:
 
     def record(self, attestation: Attestation) -> None:
         existing = self._records.get(attestation.control)
-        if existing is None or attestation.issued_at >= existing.issued_at:
+        if existing is None or attestation.issued_at > existing.issued_at:
+            self._records[attestation.control] = attestation
+        elif attestation.issued_at == existing.issued_at and not attestation.result:
+            # Tie-break to the denial: an appended PASS must not be able to
+            # overtake a FAIL of the same instant.
             self._records[attestation.control] = attestation
 
     def get(self, control: str) -> Attestation | None:
@@ -97,7 +103,11 @@ class AttestationStore:
         if not path.is_file():
             return cls()
         store = cls()
-        for lineno, line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), start=1):
+        # split("\n"), not splitlines(): splitlines() also breaks on \v \f \x85
+        # and U+2028/9, which are legal inside a JSON string and invisible to
+        # wc, diff, grep and any per-line hasher. The records this loader
+        # resolves must be the same set an auditor counts.
+        for lineno, line in enumerate(path.read_text(encoding="utf-8-sig").split("\n"), start=1):
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
@@ -110,6 +120,7 @@ class AttestationStore:
                         issued_at=datetime.fromisoformat(payload["issued_at"]),
                         issuer=payload["issuer"],
                         evidence_ref=payload["evidence_ref"],
+                        provenance=payload.get("provenance", "manual"),
                     )
                 )
             except (KeyError, ValueError, TypeError) as exc:
@@ -130,6 +141,7 @@ class AttestationStore:
             "issued_at": attestation.issued_at.isoformat(),
             "issuer": attestation.issuer,
             "evidence_ref": attestation.evidence_ref,
+            "provenance": attestation.provenance,
         }
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, sort_keys=True) + "\n")

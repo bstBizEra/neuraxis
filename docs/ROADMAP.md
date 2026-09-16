@@ -1,6 +1,6 @@
 # neuraxis — Roadmap
 
-**Current:** v0.5.2 — gate core, per-control windows, provider harness, Node client, 4 of 10 controls wired. 229 Python tests + 19 JS contract tests.
+**Current:** v0.6.0 — hardened after adversarial review. 4 of 10 controls wired, on an unauthenticated evidence substrate until T1 lands. 278 Python tests + 19 JS contract tests.
 **To:** v1.0 (operational governance layer for BST-SA)
 **Governing constraint:** one task at a time, CI green = done.
 
@@ -13,7 +13,7 @@
 | v0.4 loop contracts | blocked on T3/T4 |
 | v0.5 maw-js client | **shipped** |
 | v0.6 service mode | not until a caller needs it |
-| v1.0 hardening | after v0.4 |
+| v1.0 hardening | **partially shipped as v0.6.0** — review done, fixable findings closed, structural limits documented |
 
 ---
 

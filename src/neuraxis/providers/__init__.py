@@ -15,6 +15,14 @@ passed unconditionally:
   4. Evidence         — a bare pass/fail is not an attestation
 
 A provider that cannot satisfy all four does not get to record a PASS.
+
+**What the four rules do not establish.** Rule 3 runs a probe the provider
+itself authors, so it proves a probe exists and reports failure — not that the
+probe exercised the same code path as `check()`. A provider with a canned
+failing probe and a canned passing check satisfies every rule. No in-process
+harness can close that: provider integrity belongs to the kernel boundary
+(signed manifests, out-of-process execution), which is KBS-001's job, not this
+module's. See "known limits" in the README.
 """
 
 from __future__ import annotations
