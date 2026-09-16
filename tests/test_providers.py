@@ -249,7 +249,12 @@ def test_every_control_has_a_declared_provider(registry):
 def test_wired_providers_are_exactly_the_ones_with_a_real_source():
     """Asserts the set, not a count — a count says nothing about which moved."""
     wired = sorted(p.name for p in providers_for() if not isinstance(p, UnwiredProvider))
-    assert wired == ["badf/gate-log", "nx/verifier-independence"]
+    assert wired == [
+        "badf/gate-log",
+        "l0/lease-audit",
+        "l0/scope-budget",
+        "nx/verifier-independence",
+    ]
 
 
 def test_every_unwired_provider_names_a_blocker():

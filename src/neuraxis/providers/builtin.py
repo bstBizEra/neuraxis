@@ -1,6 +1,6 @@
 """Built-in providers.
 
-Two are real. Eight are declared UNWIRED against named blockers, which is the
+Four are real. Six are declared UNWIRED against named blockers, which is the
 honest representation of where the T-queue actually stands — and it means
 `neuraxis assure` refuses to attest those controls rather than skipping them
 quietly.
@@ -268,27 +268,33 @@ class GateLogRatificationProvider(Provider):
         )
 
 
+from .lease import LeaseAuthorityProvider, LeaseContainmentProvider  # noqa: E402
+
 # --- Controls with no source yet -------------------------------------------
 # Each names its blocker so `neuraxis providers` reads as a live dependency view.
 
 UNWIRED = (
     ("GV-01", "kbs-001/probe", "KBS-001 T1 — kernel boundary probe"),
-    ("GV-02", "l0/lease-audit", "L0 enforcement layer — lease issuance log"),
     ("GV-03", "kbs-001/sink-worm", "KBS-001 T1 — WORM-backed evidence sink"),
     ("GV-05", "nx/rollback-drill", "neuraxis v0.4 — rollback drill runner"),
-    ("GV-06", "l0/scope-budget", "L0 enforcement layer — scope and budget ceilings"),
     ("GV-08", "kbs-001/external-probe", "KBS-001 T1 — external assurance org"),
     ("GV-09", "nx/lesson-provenance", "neuraxis v0.4 — lesson provenance binding"),
     ("GV-10", "nx/killswitch-drill", "KBS-001 E-13 — kill switch"),
 )
 
 
-def builtin_providers(**config: Any) -> list[Provider]:
+def builtin_providers(**config: Any) -> list[Provider]:  # noqa: D401
     """Every provider shipped with the package, real and unwired alike."""
     providers: list[Provider] = [
         VerifierIndependenceProvider(**{k: v for k, v in config.items() if k == "log_path"}),
         GateLogRatificationProvider(
             **{k: v for k, v in config.items() if k == "gate_log_path"}
+        ),
+        LeaseAuthorityProvider(
+            **{k: v for k, v in config.items() if k == "lease_log_path"}
+        ),
+        LeaseContainmentProvider(
+            **{k: v for k, v in config.items() if k == "lease_log_path"}
         ),
     ]
     providers.extend(

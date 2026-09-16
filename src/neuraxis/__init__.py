@@ -54,7 +54,7 @@ from .registry import Registry, load_registry
 from .resolver import BandResolver
 from .scorecard import Scorecard, measure
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"
 FRAMEWORK = "bst-neuraxis"
 PRINCIPLE = "governed-evolution"
 
