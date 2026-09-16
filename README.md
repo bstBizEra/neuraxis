@@ -294,6 +294,7 @@ neuraxis attest --control GV-08 --result "$RESULT" \
 | `scorecard` | `I = C x R x L x A x V x G`, used as a veto |
 | `providers` | Provider contract, conformance harness, builtin providers |
 | `conformance` | Black-box suite for attestation **sources** |
+| `register` | The decision register: rulings, enforcement points, reversal detectors |
 | `roadmap` | The build sequence as a graph, resolved against the live gate |
 | `caller` | Black-box suite for gate **callers** (ILR-001-DR D-07) |
 | `cli` | The JSON/exit-code contract |
@@ -357,7 +358,7 @@ corresponds to a confirmed exploit, and each has a regression test in
 python -m pytest -q --cov=neuraxis --cov-report=term-missing
 ```
 
-**Python:** 680 tests, 94% coverage. **JS client:** 24 contract tests. The suite includes explicit **positive controls** — `test_allows_when_everything_holds`, `test_ratified_non_delegable_capability_is_allowed`, `test_guard_decorator_runs_the_body_on_allow`. Without them, a gate that denied unconditionally would pass every other assertion in the suite. `tests/test_failclosed.py` asserts that faults become denials rather than implicit allows.
+**Python:** 722 tests, 94% coverage. **JS client:** 24 contract tests. The suite includes explicit **positive controls** — `test_allows_when_everything_holds`, `test_ratified_non_delegable_capability_is_allowed`, `test_guard_decorator_runs_the_body_on_allow`. Without them, a gate that denied unconditionally would pass every other assertion in the suite. `tests/test_failclosed.py` asserts that faults become denials rather than implicit allows.
 
 ---
 
@@ -653,9 +654,49 @@ The roadmap is **not kernel** — nothing in it licenses a capability, opens a b
 or waives a control, so `neuraxis drift` does not cover it. See
 [ADR 0008](docs/adr/0008-roadmap-is-a-graph.md).
 
+## The register watches its own rulings
+
+Every ruling in ILR-001-DR carries a reversal trigger, because — the register's
+own words — *a ruling with no reversal condition is dogma*. In prose, a trigger
+fires only if somebody remembers it.
+
+```bash
+neuraxis register                   # every ruling, its enforcement points, its trigger
+neuraxis register --check           # run the detectors
+neuraxis register --ruling D-01     # one ruling in full
+```
+
+```
+  D-01  CLEAR    amends  IL-13 Self-Improving placement
+  D-02  WATCHED          Banded graph versus ladder
+  D-06  CLEAR            KBS-001 / T1 as the Band C blocker
+
+WATCHED BY A PERSON, NOT A MACHINE
+  D-02  OP-Vily (per external issue)
+        An external party cites an ordinal IL level back to BST in writing
+```
+
+Two invariants make `register.yaml` more than a transcript:
+
+**Every ruling names the symbol that enforces it, and that symbol must import.**
+Rename `NON_COMPENSABLE_FLOOR` and the register stops loading. It is the only
+thing that keeps a ruling attached to its implementation — a document can
+describe an enforcement point deleted three releases ago and read exactly as
+convincingly as one that exists.
+
+**Every trigger is detectable or owned.** A detector is a command plus the exit
+code meaning ARMED, or `by_construction` with a stated reason it cannot fire. A
+trigger without one must name an owner *and* a cadence. A trigger that is
+neither **fails to load**, because that trigger is remembered, and a remembered
+trigger is one nobody notices firing.
+
+`NOT RUN` is reported separately from `CLEAR`; they are different facts. And a
+detector exiting neither 0 nor the armed code is **ARMED** — a detector that
+cannot answer has not answered. See [ADR 0009](docs/adr/0009-a-ruling-names-its-enforcement.md).
+
 ## Architecture decisions
 
-Eight of them, in [`docs/adr/`](docs/adr/). Each states how it could be wrong,
+Nine of them, in [`docs/adr/`](docs/adr/). Each states how it could be wrong,
 and a test enforces that: no Reversal section, no ADR. The short version of why
 the log exists is the same argument as everything else here — a rule with no
 single place it lives is a rule that gets re-litigated.
