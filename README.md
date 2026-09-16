@@ -189,7 +189,9 @@ echo '{"intent":"run pipeline","identity":"agent-drafter","role":"drafter",
 | 13 | DELEGATE |
 | 2 | error — registry fault, bad input, unreadable attestations |
 
-**Callers must test for zero, not for a code list.** A caller that blocks only on 10 will act on an ESCALATE.
+**Callers must test for zero, not for a code list.** A caller that blocks only on 10 will act on an ESCALATE. That is not advice — it is a scenario in
+[caller conformance](#caller-conformance--can-this-gate-client-be-trusted), and L0's
+integration contract is [`docs/L0-LEASE-GATE-CONTRACT.md`](docs/L0-LEASE-GATE-CONTRACT.md).
 
 Unknown request fields are rejected rather than ignored, so a typo (`rollbackTested`) fails loudly instead of silently dropping a constraint.
 
@@ -254,10 +256,11 @@ neuraxis --json contract
 ```
 
 Emits the decision/exit-code table, the permitting decision, obligations, risks
-and accepted request fields. Non-Python clients assert against this rather than
-keeping their own copy — a copy is a thing that can silently go stale, and a
-stale exit-code table in a governance client means an unrecognised block read
-as no block.
+and accepted request fields, plus a `caller` block carrying D-03's five blocking
+events and the environment variables a conforming caller resolves the gate from.
+Non-Python clients assert against this rather than keeping their own copy — a
+copy is a thing that can silently go stale, and a stale exit-code table in a
+governance client means an unrecognised block read as no block.
 
 ---
 
@@ -290,6 +293,8 @@ neuraxis attest --control GV-08 --result "$RESULT" \
 | `guard` | Call-site enforcement: context manager and decorator |
 | `scorecard` | `I = C x R x L x A x V x G`, used as a veto |
 | `providers` | Provider contract, conformance harness, builtin providers |
+| `conformance` | Black-box suite for attestation **sources** |
+| `caller` | Black-box suite for gate **callers** (ILR-001-DR D-07) |
 | `cli` | The JSON/exit-code contract |
 
 ---
@@ -351,7 +356,7 @@ corresponds to a confirmed exploit, and each has a regression test in
 python -m pytest -q --cov=neuraxis --cov-report=term-missing
 ```
 
-**Python:** 229 tests, 94% coverage. **JS client:** 19 contract tests. The suite includes explicit **positive controls** — `test_allows_when_everything_holds`, `test_ratified_non_delegable_capability_is_allowed`, `test_guard_decorator_runs_the_body_on_allow`. Without them, a gate that denied unconditionally would pass every other assertion in the suite. `tests/test_failclosed.py` asserts that faults become denials rather than implicit allows.
+**Python:** 606 tests, 94% coverage. **JS client:** 24 contract tests. The suite includes explicit **positive controls** — `test_allows_when_everything_holds`, `test_ratified_non_delegable_capability_is_allowed`, `test_guard_decorator_runs_the_body_on_allow`. Without them, a gate that denied unconditionally would pass every other assertion in the suite. `tests/test_failclosed.py` asserts that faults become denials rather than implicit allows.
 
 ---
 
@@ -551,6 +556,59 @@ substantive ones.
 conformance shows a source *can* fail, not that it fails when it should. It
 closes the case that actually happens: a check that was correct when written
 and has since stopped exercising anything, still reporting green.
+
+## Caller conformance — can this gate client be trusted?
+
+`conform` asks whether an attestation source can be trusted to attest. This asks
+the mirror question about the other end: whether a **caller** of `neuraxis gate`
+can be trusted to act on what the gate returns.
+
+ILR-001-DR D-07 has L0 shell out to this CLI at each of D-03's five blocking
+events rather than embed the gate. That costs nothing to build, which is why it
+was chosen — and it moves the entire enforcement burden across a process
+boundary. This package can return DENY perfectly and license nothing, because
+the thing issuing the lease is somewhere else.
+
+```bash
+neuraxis caller-conform -- python examples/conforming_caller.py
+#  PASS on all twelve checks.                exit 0
+
+neuraxis caller-conform -- python examples/credulous_caller.py
+#  FAIL escalate, wait_for_authority, delegate, fault, unknown_exit,
+#       contradiction, silent, fidelity.     exit 10
+```
+
+A caller is an **executable** that issues one lease: the request in on stdin, the
+gate resolved from `NEURAXIS_BIN` / `NEURAXIS_BIN_ARGS`, exit 0 if it issued and
+non-zero if it refused. The suite substitutes a scripted gate and looks only at
+which it did.
+
+| Check | The scripted gate returns | The caller must |
+|---|---|---|
+| `allow` | exit 0, an ALLOW verdict | issue |
+| `deny` … `delegate` | exit 10 / 11 / 12 / 13 | refuse |
+| `fault` | exit 2 | refuse — a gate that could not load is not a gate with no objection |
+| `unknown_exit` | exit 47 | refuse — unrecognised must not read as unblocked |
+| `contradiction` | exit 0, verdict says DENY | refuse the whole run; one of the two is wrong and there is no telling which |
+| `silent` | exit 0, no verdict | refuse — no verdict id, so nothing could later show the lease was licensed |
+| `missing` | no binary | refuse |
+| `called` | — | have invoked the gate every time; a cached ALLOW is the D-03 bypass |
+| `fidelity` | — | have sent the request it was handed, unchanged |
+
+**`fidelity` is the one that earns the suite its place.** The reference request
+names `agent-motor` as both performer and its own verifier, so a faithful caller
+gets a DENY. A caller that drops `verifier` gets an ALLOW — and nothing between
+the two reports an error. No log line, no exception, no failing test anyone would
+have written. W9 is the highest-ranked item in the register and it is switched
+off by a dict comprehension.
+
+**`examples/credulous_caller.py` is in the repository deliberately**, for the
+reason `vacuous_source.py` is. It calls the gate. It checks the result. It blocks
+on DENY. Its author would test it against a DENY, watch it refuse, and ship it.
+
+**What it does not prove.** D-03 has five call sites and this proves the one it
+was given; each needs its own conforming entry point. It does not test the
+timeout, because testing a hang means waiting on one.
 
 ## Verifier independence, in full
 

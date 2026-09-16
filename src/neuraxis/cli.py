@@ -27,6 +27,7 @@ from typing import Any, Sequence
 
 from . import __version__
 from .attestation import AttestationStore
+from .caller import BLOCKING_EVENTS, CALLER_SCENARIOS, check_caller
 from .conformance import check_source
 from .errors import NeuraxisError
 from .envelope import Envelope, EnvelopeRegister
@@ -354,6 +355,44 @@ def cmd_conform(args: argparse.Namespace) -> int:
             f"{control.id}: this source DOES NOT conform "
             f"({', '.join(r.scenario for r in report.failures)}). "
             "Do not accept attestations from it."
+        )
+
+    _emit(report.to_dict(), as_json=args.json, text="\n".join(lines))
+    return EXIT_OK if report.conforms else EXIT_BY_DECISION[Decision.DENY]
+
+
+def cmd_caller_conform(args: argparse.Namespace) -> int:
+    """Can this gate caller be trusted to act on what the gate returns?
+
+    The mirror of `conform`. D-07 put the whole enforcement burden on the
+    caller: this package can return DENY perfectly and still license nothing,
+    because the thing that issues the lease is somewhere else. A caller that
+    blocks on 10 and proceeds on 11 is the failure, and it passes every test
+    its own authors would think to write.
+    """
+    report = check_caller(args.caller, timeout=float(args.timeout))
+
+    lines = [f"caller:  {report.caller}", ""]
+    for c in report.checks:
+        lines.append(f"{'PASS' if c.ok else 'FAIL'}  {c.scenario:<19} {c.rule}")
+        lines.append(f"                   {c.detail}")
+    for w in report.warnings:
+        lines.append("")
+        lines.append(f"NOTE: {w}")
+    lines.append("")
+    if report.conforms:
+        lines.append(
+            "This caller conforms at the entry point it was given. That means it "
+            "refuses on every block and issues on an ALLOW -- not that it calls the "
+            f"gate everywhere it should. D-03 has {len(BLOCKING_EVENTS)} blocking "
+            f"events ({', '.join(BLOCKING_EVENTS)}); each needs its own conforming "
+            "entry point."
+        )
+    else:
+        lines.append(
+            "This caller DOES NOT conform "
+            f"({', '.join(c.scenario for c in report.failures)}). "
+            "Do not route authority grants through it."
         )
 
     _emit(report.to_dict(), as_json=args.json, text="\n".join(lines))
@@ -905,6 +944,19 @@ def cmd_contract(args: argparse.Namespace) -> int:
             "required": list(REQUEST_REQUIRED_FIELDS),
             "optional": list(REQUEST_OPTIONAL_FIELDS),
         },
+        # ILR-001-DR D-07. L0 shells out to this CLI rather than embedding the
+        # gate, so the caller's half of the contract is published here for the
+        # same reason the decision table is: a copy held on the other side goes
+        # stale silently, and a stale copy in a governance client means a block
+        # nobody recognised.
+        "caller": {
+            "blocking_events": list(BLOCKING_EVENTS),
+            "bin_env": "NEURAXIS_BIN",
+            "bin_args_env": "NEURAXIS_BIN_ARGS",
+            "proceed_only_on_exit": EXIT_OK,
+            "conformance_scenarios": list(CALLER_SCENARIOS),
+            "conformance_command": "neuraxis caller-conform -- <caller argv>",
+        },
     }
     lines = [f"neuraxis contract v{payload['version']}", "  decisions:"]
     lines += [
@@ -913,6 +965,9 @@ def cmd_contract(args: argparse.Namespace) -> int:
         for name, code in payload["decisions"].items()
     ]
     lines.append(f"    {'(error)':<20} exit {EXIT_ERROR}")
+    lines.append("  caller (D-07): proceed only on exit 0; every other code blocks")
+    lines.append(f"    blocking events: {', '.join(BLOCKING_EVENTS)}")
+    lines.append("    prove it:        neuraxis caller-conform -- <caller argv>")
     _emit(payload, as_json=args.json, text="\n".join(lines))
     return EXIT_OK
 
@@ -1072,6 +1127,18 @@ def build_parser() -> argparse.ArgumentParser:
              "Windows path would lose its backslashes",
     )
     p.set_defaults(func=cmd_conform)
+
+    p = sub.add_parser(
+        "caller-conform",
+        help="can this gate caller be trusted to act on what the gate returns? (D-07)",
+    )
+    p.add_argument("--timeout", default=30.0, type=float, help="seconds per scenario")
+    p.add_argument(
+        "caller", nargs="+",
+        help="the caller command and its arguments, after `--`. Given as argv rather "
+             "than a command line, for the reason `conform` gives",
+    )
+    p.set_defaults(func=cmd_caller_conform)
 
     p = sub.add_parser("status", help="band attainment against current attestations")
     p.set_defaults(func=cmd_status)

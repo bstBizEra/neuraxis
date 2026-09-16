@@ -19,6 +19,13 @@ controls paired to it, enforced mechanically rather than by instruction.
 from __future__ import annotations
 
 from .attestation import AttestationStore
+from .caller import (
+    BLOCKING_EVENTS,
+    CALLER_SCENARIOS,
+    CallerCheck,
+    CallerReport,
+    check_caller,
+)
 from .conformance import (
     ConformanceError,
     ConformanceReport,
@@ -77,7 +84,7 @@ from .resolver import BandResolver
 from .scorecard import Scorecard, measure
 from .waiver import Waiver, WaiverPolicy, WaiverRegister
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 FRAMEWORK = "bst-neuraxis"
 PRINCIPLE = "governed-evolution"
 
@@ -91,6 +98,10 @@ __all__ = [
     "BandStatus",
     "Capability",
     "CapabilityDenied",
+    "BLOCKING_EVENTS",
+    "CALLER_SCENARIOS",
+    "CallerCheck",
+    "CallerReport",
     "CapabilityGuard",
     "ConformanceError",
     "ConformanceReport",
@@ -132,6 +143,7 @@ __all__ = [
     "WaiverRegister",
     "__version__",
     "audit_envelopes",
+    "check_caller",
     "check_source",
     "audit_obligations",
     "get_provider",
