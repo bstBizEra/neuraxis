@@ -1,8 +1,58 @@
 # neuraxis — Roadmap
 
-**Current:** v0.13.0 - D-07: L0 calls this CLI at every authority grant, and `caller-conform` proves a caller acts on the answer. 4 of 10 controls wired, on an unauthenticated substrate until T1. 606 Python tests + 24 JS contract tests.
-**To:** v1.0 (operational governance layer for BST-SA)
+**Current:** v0.14.0 — the plan becomes a graph. 4 of 10 controls wired, on an unauthenticated substrate until T1. 659 Python tests + 24 JS contract tests.
+**To:** v1.0 — an operational governance layer for BST-SA.
 **Governing constraint:** one task at a time, CI green = done.
+
+---
+
+## This file is not the roadmap
+
+`src/neuraxis/config/roadmap.yaml` is. This is its narrative companion — the
+same split as the registry and the README, for the same reason.
+
+```bash
+neuraxis roadmap --next          # what is actionable now, highest register score first
+neuraxis roadmap                 # everything, with why each blocked item is blocked
+neuraxis roadmap --item W2       # one item, gate by gate
+neuraxis roadmap --check         # also run the command gates and acceptance checks
+neuraxis --json roadmap          # the graph, for an agent
+```
+
+The YAML is normative because a plan written as prose is a plan somebody has to
+interpret, and interpretation under schedule pressure is how *blocked on T1*
+becomes *we'll do T1 after*. ILR-001-DR D-02 made this correction once already,
+on the capability index: a numbered list is read as a permission to proceed down
+it, so the ladder became a banded graph. [ADR 0008](adr/0008-roadmap-is-a-graph.md)
+applies the same correction to the build sequence.
+
+Three properties do the work:
+
+- **Readiness is computed, not declared.** An item's `state` is a claim somebody
+  typed. Whether it is *ready* comes from the resolver the gate itself runs on —
+  band attainment from the registry and attestation store, control freshness
+  from the same windows, item dependencies from the file. Nothing can report an
+  item ready because a status column was edited.
+- **A `shipped` item with an unsatisfied gate is a CONTRADICTION**, and is
+  reported as one rather than as green. That is the shape of *the Band C work
+  shipped while Band C was blocked*, occurring in the plan instead of the
+  system. A test asserts the shipped roadmap contradicts itself nowhere.
+- **An unevaluable gate blocks.** An unrecognised gate kind, a band not in the
+  registry, a command gate that was not run: UNKNOWN, never READY — the same
+  rule as an unrecognised exit code, for the same reason.
+
+An external dependency must name an owner or the file does not load, because an
+external nobody owns is a wish rather than a blocker. `neuraxis roadmap` prints
+them grouped by owner, which is the most useful line in the output: it is the
+list of conversations that have to happen for anything else to move.
+
+**The roadmap is not kernel.** Nothing in it licenses a capability, opens a band
+or waives a control, so changing it is a plan change and `neuraxis drift` does
+not cover it.
+
+---
+
+## Where it stands
 
 | Version | State |
 |---|---|
@@ -10,17 +60,65 @@
 | v0.2 per-control windows | **shipped** |
 | v0.3 provider harness | **shipped** — 4 of 10 controls wired |
 | v0.3.1 Windows portability | **shipped** |
-| v0.4 loop contracts | **Evidence Record shipped as v0.7.0**; Canonical Lesson / Weakness Signal still blocked on T3/T4 |
+| v0.4 loop contracts | Evidence Record shipped as v0.7.0; the rest is `PKG-LOOP-CONTRACTS`, blocked on T3/T4 |
 | v0.5 maw-js client | **shipped** |
+| v0.6 service mode | not until a caller needs it |
 | v0.7.0 evidence records | **shipped** |
 | v0.8.0 waivers + monotonicity (D-05/D-06) | **shipped** |
 | v0.9.0 bounded self-tuning (D-01) | **shipped** |
 | v0.10.0 drift check + operator runbook | **shipped** |
+| v0.11.0 conformance suite | **shipped** |
 | v0.12.0 W9 envelope clause | **shipped** |
 | v0.13.0 L0 integration contract (D-07) | **shipped** |
-| v0.6 service mode | not until a caller needs it |
-| v0.11.0 conformance suite | **shipped** |
-| v1.0 hardening | **all four items shipped** (v0.6.0 review, threat model, v0.10.0 runbook, v0.11.0 conformance suite). **Deliberately not tagged v1.0** while zero bands are attainable — see the v1.0 section |
+| v0.14.0 the plan becomes a graph | **shipped** |
+| v1.0 hardening | all four items shipped; **deliberately not tagged** while zero bands are attainable — see the v1.0 section |
+
+Ask the tool rather than this table:
+
+```
+$ neuraxis roadmap --next
+ACTIONABLE NOW
+  3.65  W8    The decision register as machine-readable config  [neuraxis]
+
+FREEZE IN FORCE (ILR-001-DR-3.3)
+  - W9 is partial, waiting on external T1, external L0-ENTRY-POINTS
+  - W2 is partial, waiting on external L0-ENTRY-POINTS
+```
+
+**One actionable item out of eighteen.** That is not a failure of the plan, it
+is the plan being honest: everything else waits on T1, on an L0 entry point, or
+on a band that cannot open until T1 lands. Before the graph existed, the same
+fact was spread across eleven separate occurrences of the phrase *blocked on
+T1*, and nobody could have told you the count.
+
+---
+
+## v0.14.0 — the plan becomes a graph — SHIPPED
+
+Every rule in this package is mechanical. The plan that decided what to build
+next was prose — the one artefact nothing enforced.
+
+What shipped: `roadmap.yaml` as a dependency graph with owners and
+machine-evaluable gates, `neuraxis roadmap` to resolve it against the live gate,
+and `docs/adr/` — eight architecture decision records, backfilled from three
+places they were previously scattered across.
+
+**The ADR log matters for the same reason.** A rule with no single place it
+lives is a rule that gets re-litigated, usually by someone reasonable, usually
+arguing correctly from the part of it they found. Each ADR states how it could
+be wrong, and a test enforces that: no Reversal section, no ADR.
+
+Two refusals in the loader are worth naming, because both are bugs that
+happened rather than bugs imagined:
+
+- **A duplicate YAML key is refused.** PyYAML takes the last one silently. The
+  first draft of `roadmap.yaml` carried `gates: []` and a real `gates:` block on
+  the same item; the empty one vanished without a word. Written the other way
+  round it removes every gate and the item reports READY.
+- **A gate naming an item or external that does not exist is a load failure.**
+  It would otherwise evaluate to UNKNOWN, which blocks — safe, and
+  indistinguishable from a real unknown nobody can chase. A typo must not become
+  a permanent mystery blocker.
 
 ---
 
@@ -112,6 +210,8 @@ The six unwired controls are declared as `UnwiredProvider` rather than omitted, 
 
 ## v0.4 — Evidence Record and the loop contracts
 
+> Roadmap item `PKG-LOOP-CONTRACTS` · `neuraxis roadmap --item PKG-LOOP-CONTRACTS`
+
 The Execution → Learning boundary (ILR-001 §6.5), which is what makes GV-03 and GV-09 substantive.
 
 | Artifact | Direction | Content |
@@ -134,6 +234,8 @@ The Execution → Learning boundary (ILR-001 §6.5), which is what makes GV-03 a
 ---
 
 ## v0.5 — maw-js client — SHIPPED (L0 integration outstanding)
+
+> The outstanding half is roadmap items `W2` and `PKG-V1`, both waiting on externals `L0-ENTRY-POINTS` and `BST-SA-WORKSTREAM`.
 
 **Why:** the CLI contract exists; BST-SA agents should not be shelling out by hand.
 
@@ -167,6 +269,8 @@ Only if MCP Hub or a non-shell caller needs it. FastAPI wrapper over the same co
 
 ## v1.0 — Hardening
 
+> Roadmap item `PKG-V1` · `neuraxis roadmap --item PKG-V1`
+
 - [x] Adversarial review of Neuraxis itself, in the style of the KBS-001 pass — **three of them**: v0.6.0 (9 findings), v0.8.0 (11), v0.9.0 (15). All 35 reproduced by execution before being fixed
 - [x] Threat model written down explicitly — `docs/THREAT-MODEL.md`, shipped between v0.9.0 and v0.10.0
 - [x] Attestation source conformance suite — **v0.11.0**, `docs/CONFORMANCE.md` and `neuraxis conform`
@@ -186,6 +290,8 @@ runs out.
 
 ## Dependency on the T-queue
 
+> These are the `externals` block of `roadmap.yaml`, each with a named owner. `neuraxis roadmap` prints them grouped by owner.
+
 Neuraxis and the KBS-001 roadmap are one path, not two:
 
 ```
@@ -200,6 +306,8 @@ v0.2 is the only item with no external dependency, which is a second reason it g
 ---
 
 ## What running looks like
+
+> Roadmap item `PKG-ASSURE`, blocked on external `DEPLOY-TARGET`. The runbook is `docs/RUNBOOK.md`.
 
 **Daily assurance run** — the load-bearing job:
 
