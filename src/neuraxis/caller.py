@@ -82,6 +82,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import socketserver
 import subprocess
 import sys
@@ -89,11 +90,12 @@ import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .conformance import ConformanceError
-from .model import REQUEST_REQUIRED_FIELDS, AuthorityRequest, strict_principal
+from .model import REQUEST_REQUIRED_FIELDS, AuthorityRequest, now_utc
 
 __all__ = [
     "BLOCKING_EVENTS",
@@ -164,13 +166,57 @@ _GATE_SERVED = "served"
 _GATE_MISSING = "missing"
 _GATE_UNSET = "unset"
 
-#: Fields naming a principal. Equality here CERTIFIES the caller, so it takes
-#: the strict fold -- the one this package reserves for comparisons where a
-#: collision authorises.
-_PRINCIPAL_FIELDS = frozenset({"identity", "verifier", "performer", "role"})
+# There is deliberately no principal-folding here, and the reason is a
+# correction to this module's own previous fix.
+#
+# The first cut applied `strict_principal` to principal fields, reasoning that
+# equality certifies the caller and this package reserves the strict fold for
+# comparisons where equality authorises. That rule is about deciding whether
+# two names denote the same PRINCIPAL. This comparison is not that question: it
+# asks whether the bytes the gate received are the bytes the caller was handed,
+# and any normalisation is a place where a difference gets excused. It was also
+# not strictly safer -- two names both carrying invisible codepoints both fold
+# to "" and compare EQUAL, which plain comparison catches.
+#
+# So fidelity compares exactly, with no strip and no fold. A faithful caller
+# forwards what it was given; it has nothing to normalise.
+
+#: Fields a faithful caller may legitimately stamp on the way through, and the
+#: only ones exempt from the added-field rule. They are VALIDATED rather than
+#: waived: `requested_at` was previously subtracted from the added set and never
+#: reached the value loop either, making it the one key a caller could inject
+#: with any content at all -- including a timestamp chosen to sit inside a
+#: change freeze or outside a replay window.
+_STAMPABLE = ("requested_at",)
+
+#: How far a stamped `requested_at` may sit from now.
+_STAMP_DRIFT_SECONDS = 300.0
+
+#: What a faithful caller puts on the gate's command line, beyond the leading
+#: arguments the harness supplied through NEURAXIS_BIN_ARGS.
+_EXPECTED_GATE_ARGV = ("--json", "gate", "-")
+_EXPECTED_GATE_FLAGS = frozenset({"--json", "-"})
 
 
-@dataclass(frozen=True)
+def _mint_request() -> dict[str, Any]:
+    """A fresh reference request for one run.
+
+    `REFERENCE_REQUEST` is a module constant, so a caller could recognise the
+    harness by its stdin and hardcode against it. The principal names carry a
+    per-run suffix; everything structural -- the scope, the risk, and the fact
+    that `verifier` equals `identity` -- is fixed, because those are what the
+    scenarios reason about.
+    """
+    tag = secrets.token_hex(4)
+    principal = f"agent-motor-{tag}"
+    request = dict(REFERENCE_REQUEST)
+    request["identity"] = principal
+    request["verifier"] = principal
+    request["intent"] = f"{REFERENCE_REQUEST['intent']} ({tag})"
+    return request
+
+
+@dataclass
 class _Scenario:
     name: str
     rule: str
@@ -179,9 +225,10 @@ class _Scenario:
     stdout: str = ""
     stderr: str = ""
     gate: str = _GATE_SERVED
-    #: Replaces the reference request for this scenario, when it needs a
-    #: different one.
-    request_override: Mapping[str, Any] | None = None
+    #: The request this scenario hands the caller. Minted on first use so it
+    #: differs per run, and held so the fidelity comparison comes from the same
+    #: object the caller was given.
+    request_override: dict[str, Any] | None = None
     #: When set, the scripted gate ALLOWS a request that has had these fields
     #: removed and DENIES the faithful one. A fixed-answer gate can never
     #: observe doctoring, because nothing the caller does to the request
@@ -193,7 +240,9 @@ class _Scenario:
         return self.gate == _GATE_SERVED
 
     def request(self) -> Mapping[str, Any]:
-        return self.request_override or REFERENCE_REQUEST
+        if self.request_override is None:
+            self.request_override = _mint_request()
+        return self.request_override
 
     def responder(self):
         if not self.allow_if_missing:
@@ -280,6 +329,12 @@ _SCENARIOS: tuple[_Scenario, ...] = (
         "an unconfigured gate is not an absent objection - the production default "
         "is that nothing has been set yet, and that branch has to refuse too",
         REFUSE, 0, "", "", gate=_GATE_UNSET,
+    ),
+    _Scenario(
+        "allow_verdict_nonzero_exit",
+        "exit code and verdict must agree, in BOTH directions - a caller that reads only "
+        "the verdict issues on a gate that printed one and then died",
+        REFUSE, 11, json.dumps(_ALLOW_VERDICT, sort_keys=True),
     ),
     _Scenario(
         "fidelity_trap",
@@ -467,12 +522,16 @@ def _drive(argv: list[str], scenario: _Scenario, timeout: float) -> _Run:
             else:
                 env["NEURAXIS_BIN"] = sys.executable
                 env["NEURAXIS_BIN_ARGS"] = json.dumps([str(stub), str(server.port)])
-            # Informational only. A caller that branches on it is testing its
-            # way past the suite rather than through it. No black-box harness
-            # can prevent that, and the honest thing is to say so -- but note
-            # that this is now the ONLY harness state the caller is handed. It
-            # is no longer given the answer or the evidence file.
-            env["NEURAXIS_CONFORMANCE_SCENARIO"] = scenario.name
+            # NEURAXIS_CONFORMANCE_SCENARIO used to be set here, "informational
+            # only", defended with the argument that no black-box harness can
+            # stop a caller fingerprinting it. That argument is true and was
+            # applied to the wrong thing. Fingerprinting is hard to prevent;
+            # handing the subject a variable whose value IS the expected answer
+            # is not the same problem. Exactly one scenario expects PROCEED, so
+            #     exit(0 if $NEURAXIS_CONFORMANCE_SCENARIO == "allow" else 1)
+            # was a complete oracle for all twelve checks, and in production --
+            # where the variable is unset -- that caller issues every lease
+            # unconditionally. It had no consumer. It is gone.
 
             try:
                 completed = subprocess.run(
@@ -514,6 +573,59 @@ def _sent(record: Mapping[str, Any]) -> Mapping[str, Any] | str:
     return sent
 
 
+def _check_stamp(name: str, value: Any) -> str | None:
+    """A field a caller may add is validated, not waived."""
+    if name != "requested_at":
+        return f"{name!r} is stampable but has no validator"
+    if not isinstance(value, str):
+        return f"'requested_at' must be a string, got {type(value).__name__}"
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return f"'requested_at' is not an ISO-8601 timestamp: {value!r}"
+    if parsed.tzinfo is None:
+        return "'requested_at' carries no timezone"
+    drift = abs((parsed - now_utc()).total_seconds())
+    if drift > _STAMP_DRIFT_SECONDS:
+        return (
+            f"'requested_at' is {drift / 60:.0f} minutes from now; a caller that chooses "
+            "the clock chooses which freeze window and which replay horizon it is inside"
+        )
+    return None
+
+
+def _compare_argv(argv: Sequence[str], expected_leading: Sequence[str]) -> list[str]:
+    """What the caller put on the gate's command line.
+
+    Recorded since the harness gained a server and never compared. For a CLI
+    gate the arguments carry at least as much authority as the body: a
+    subcommand, a `--force`, a `--registry` pointing somewhere permissive.
+    """
+    if not argv:
+        # The stub fills this from its own `sys.argv`, so an empty record means
+        # whatever reached the server did not come through a gate invocation.
+        # A caller that opens the socket itself, rather than executing
+        # NEURAXIS_BIN, lands here.
+        #
+        # This detects the shortcut, not a determined impersonation: a caller
+        # that also forges the argv is indistinguishable from the stub over a
+        # socket, and separating them needs the peer's process identity, which
+        # is T1-shaped. `called` is narrowed to what it can actually show.
+        return [
+            "reached the gate with no command line; nothing shows NEURAXIS_BIN was executed"
+        ]
+    missing = [a for a in expected_leading if a not in argv]
+    if missing:
+        return [f"invoked the gate without {', '.join(repr(a) for a in missing)}"]
+    suspicious = [
+        a for a in argv
+        if a.startswith("-") and a not in _EXPECTED_GATE_FLAGS and a not in expected_leading
+    ]
+    if suspicious:
+        return [f"passed {', '.join(repr(a) for a in suspicious)} on the gate's command line"]
+    return []
+
+
 def _compare(sent: Mapping[str, Any], expected: Mapping[str, Any]) -> list[str]:
     """Every difference between what the gate was asked and what was handed over.
 
@@ -526,13 +638,12 @@ def _compare(sent: Mapping[str, Any], expected: Mapping[str, Any]) -> list[str]:
     the GV-07 requirement, and every field it was handed did indeed arrive
     unchanged. Key sets are compared, not just values.
 
-    **Principals compare strictly.** Equality here AUTHORISES -- it is what
-    certifies the caller as faithful -- so by this package's own rule it takes
-    `strict_principal`, not a casefold that would accept `AGENT-MOTOR` as the
-    principal the gate will actually reason about.
-
-    **Scope compares byte-for-byte after stripping.** It is what lands in the
-    evidence record.
+    **Everything compares exactly.** No strip, no fold. A faithful caller
+    forwards what it was handed and has nothing to normalise, so any difference
+    is a difference. An earlier cut folded principal fields with
+    `strict_principal` on the grounds that equality certifies; that rule is
+    about deciding whether two names denote the same principal, which is not
+    the question here, and it was laxer in one case rather than safer.
     """
     faults: list[str] = []
     try:
@@ -540,7 +651,13 @@ def _compare(sent: Mapping[str, Any], expected: Mapping[str, Any]) -> list[str]:
     except (ValueError, TypeError) as exc:
         faults.append(f"the gate would have refused the request as malformed: {exc}")
 
-    added = sorted(set(sent) - set(expected) - {"requested_at"})
+    stamped = sorted(set(sent) & set(_STAMPABLE))
+    for name in stamped:
+        fault = _check_stamp(name, sent[name])
+        if fault:
+            faults.append(fault)
+
+    added = sorted(set(sent) - set(expected) - set(_STAMPABLE))
     if added:
         faults.append(
             f"added {', '.join(repr(a) for a in added)} on the way to the gate"
@@ -566,17 +683,11 @@ def _compare(sent: Mapping[str, Any], expected: Mapping[str, Any]) -> list[str]:
             )
             continue
         got = sent[name]
-        if isinstance(want, str) and isinstance(got, str):
-            same = (
-                strict_principal(got) == strict_principal(want)
-                if name in _PRINCIPAL_FIELDS
-                else got.strip() == want.strip()
-            )
-            if not same:
-                faults.append(f"{name!r} reached the gate as {got!r}, not {want!r}")
-        elif type(got) is not type(want) or got != want:
-            # `1 == True` in Python, so a type check comes first: a caller that
-            # sends 1 for a boolean has not sent the boolean the gate demands.
+        if type(got) is not type(want) or got != want:
+            # `1 == True` in Python, so the type check comes first: a caller
+            # that sends 1 for a boolean has not sent the boolean the gate
+            # demands. And the comparison is exact, so `"  scope  "` is a
+            # different scope -- it is what lands in the evidence record.
             faults.append(f"{name!r} reached the gate as {got!r}, not {want!r}")
     return faults
 
@@ -598,6 +709,10 @@ def _fidelity_faults(runs: Mapping[str, _Run], scenarios: Sequence[_Scenario]) -
         for index, record in enumerate(run.invocations, start=1):
             asked_anywhere = True
             sent = _sent(record)
+            argv_faults = _compare_argv(
+                [str(a) for a in (record.get("argv") or [])], _EXPECTED_GATE_ARGV
+            )
+            faults += [f"{scenario.name} call {index}: {f}" for f in argv_faults]
             if isinstance(sent, str):
                 faults.append(f"{scenario.name} call {index}: {sent}")
                 continue
@@ -685,7 +800,9 @@ def check_caller(
         CallerCheck(
             scenario="called",
             rule="every issuance asks - a lease granted without calling the gate is the "
-            "D-03 bypass, and the exit code cannot show it",
+            "D-03 bypass, and the exit code cannot show it. This shows the caller "
+            "CONSULTED the scripted gate; proving it EXECUTED the configured binary "
+            "needs the peer's process identity, which does not exist until T1",
             ok=not silent_scenarios,
             detail=(
                 "the gate was invoked in every scenario that offered one"

@@ -175,18 +175,23 @@ def test_blocking_on_ten_alone_licenses_the_other_blocking_decisions(tmp_path):
     assert "deny" not in failures
 
 
-def test_checking_the_decision_field_covers_for_a_wrong_exit_test(tmp_path):
-    """Two independent reads of one answer, and the second one saves the first.
+def test_the_decision_field_no_longer_covers_for_a_wrong_exit_test(tmp_path):
+    """This test used to assert the opposite, and the comfort it recorded was false.
 
-    A caller that tests `== 10` but also insists the verdict says ALLOW still
-    refuses an ESCALATE -- the verdict field catches what the exit code missed.
-    Worth pinning: it is the reason a caller can pass this suite with a latent
-    exit-code bug, and the reason the reference implementation keeps both
-    checks rather than picking the one that looks sufficient.
+    It pinned that a caller testing `== 10` still refuses an ESCALATE, because
+    the verdict field catches what the exit code missed - "two independent
+    reads of one answer, and the second one saves the first".
+
+    It saves the first only while no scenario pairs a NON-ZERO exit with an
+    ALLOW verdict, and none did. `allow_verdict_nonzero_exit` closes that, and
+    the belt-and-braces caller now fails exactly there: exit 11 is not 10, so
+    it proceeds, and the verdict says ALLOW, so it issues. Both reads have to
+    be right; neither rescues the other.
     """
     body = _FAITHFUL.replace("if r.returncode != 0:", "if r.returncode == 10:")
     report = check_caller(_caller(tmp_path, "belt_and_braces", body))
-    assert report.conforms, [c.detail for c in report.failures]
+    assert not report.conforms
+    assert "allow_verdict_nonzero_exit" in {c.scenario for c in report.failures}
 
 
 def test_a_dropped_field_is_caught_even_though_nothing_errors(tmp_path):

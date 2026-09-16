@@ -135,6 +135,13 @@ The same argument extends one step further, and this is the part that is easy to
 
 ### Check the verdict too, and refuse when the two disagree
 
+**Neither read rescues the other.** An earlier version of this contract implied
+that insisting on `decision == "ALLOW"` covered a caller whose exit-code test
+was wrong. It does not: a gate that prints a verdict and then dies produces a
+non-zero exit with an ALLOW body, and a caller reading only the verdict issues.
+`allow_verdict_nonzero_exit` is the scenario for it. Both reads have to be
+right.
+
 On exit 0, parse stdout and confirm `decision == "ALLOW"`. If the exit code and the verdict field disagree, one of them is wrong, there is no way to tell which, and **no verdict from that run is trustworthy** — refuse the whole run.
 
 Two independent reads of one answer is deliberate redundancy. The suite in §7 pins the fact that it works: a caller with a wrong exit test that *also* checks the decision field still refuses an ESCALATE. Keep both. Picking the one that looks sufficient is how the redundancy gets removed by someone tidying up.
@@ -183,6 +190,7 @@ The caller under test is an executable that issues one lease: it reads the reque
 | `silent` | exit 0, nothing on stdout | refuse |
 | `missing` | the binary does not exist | refuse |
 | `unconfigured` | `NEURAXIS_BIN` is **unset** — the production default before anyone configures it | refuse |
+| `allow_verdict_nonzero_exit` | exit 11 **with** an ALLOW verdict | refuse — the agreement rule runs both ways |
 | `fidelity_trap` | ALLOW for a request with `verifier` removed, DENY for the faithful one | refuse |
 | `called` | — | have invoked the gate in every scenario that offered one |
 | `fidelity` | — | have sent the gate the request it was handed — unchanged, nothing added, on **every** call in **every** scenario |

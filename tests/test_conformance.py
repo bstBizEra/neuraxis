@@ -84,18 +84,23 @@ def test_the_vacuous_source_is_caught_on_three_rules():
     """A suite nobody has seen fail is itself an unverified check."""
     report = check_source(_source("vacuous_source"), "GV-01", kind="probe")
     assert not report.conforms
-    assert {r.scenario for r in report.failures} == {"broken", "negative", "powerless"}
-    # It still passes rule 4: it emits a plausible reference. That is the point
-    # of keeping it -- a source can satisfy the visible rule and none of the
-    # substantive ones.
-    assert next(r for r in report.results if r.scenario == "live").ok
+    assert {r.scenario for r in report.failures} == {"live", "negative", "broken", "powerless"}
+    # It used to pass rule 4 as well, on the strength of a plausible-looking
+    # reference. It now fails `live` too, because the reference it emits is the
+    # SAME for every scenario -- and a reference that does not change between
+    # runs is not referring to a run. That is the only black-box signal that
+    # separates a source which performed a check from one that looked its
+    # answer up in a table keyed on the scenario name.
+    live = next(r for r in report.results if r.scenario == "live")
+    assert not live.ok
+    assert "does not change between runs" in live.detail
 
 
 def test_the_vacuous_source_passes_when_only_audited_on_three_rules_is_still_false():
     """Declaring `audit` drops the vacuity check but not the other two."""
     report = check_source(_source("vacuous_source"), "GV-02", kind="audit")
     assert not report.conforms
-    assert {r.scenario for r in report.failures} == {"broken", "negative"}
+    assert {r.scenario for r in report.failures} == {"live", "negative", "broken"}
 
 
 # ---- rule 4: an evidence reference, not a verdict ----------------------
@@ -148,33 +153,47 @@ def test_attesting_a_different_control_fails(tmp_path):
     assert not live.ok and "not the control it was asked about" in live.detail
 
 
-def test_a_source_that_writes_nothing_fails_live_but_conforms_on_rule_1(tmp_path):
+def test_a_source_that_writes_nothing_fails_rule_1_rather_than_being_warned_about(tmp_path):
+    """These two tests used to assert the bug.
+
+    A source that wrote nothing, or crashed, was scored `ok` on rule 1 with a
+    warning - on the reasoning that it "did not report PASS, so it fails
+    closed". That is an argument about what the CALLER does with the silence,
+    not about what the source demonstrated. And warnings do not affect
+    `conforms`, so the flag reached nobody who was gating on the verdict.
+    """
     src = _script(tmp_path, "silent", "import sys; sys.stdin.read()")
     report = check_source(src, "GV-01", kind="probe")
     assert not report.conforms
     live = next(r for r in report.results if r.scenario == "live")
     broken = next(r for r in report.results if r.scenario == "broken")
     assert not live.ok and "wrote nothing" in live.detail
-    # It did not report PASS, so rule 1 holds - but it is flagged, because
-    # fail-closed by crashing depends on every caller converting it.
-    assert broken.ok
-    assert any("crashed or emitted nothing" in w for w in report.warnings)
+    assert not broken.ok
+    assert "it has shown it stops" in broken.detail
 
 
-def test_a_source_that_crashes_conforms_on_rule_1_with_a_warning(tmp_path):
+def test_a_source_that_crashes_fails_rule_1(tmp_path):
     src = _script(tmp_path, "crash", "import sys; sys.stdin.read(); raise SystemExit(3)")
     report = check_source(src, "GV-01", kind="probe")
     broken = next(r for r in report.results if r.scenario == "broken")
-    assert broken.ok and broken.exit_code == 3
-    assert report.warnings
+    assert not broken.ok and broken.exit_code == 3
 
 
 def test_a_hanging_source_is_not_a_pass(tmp_path):
+    """Tightened in v0.18.0.
+
+    `broken` used to be satisfied by anything that was not an explicit PASS, so
+    a source that hung there was scored `ok` with a warning -- and a warning
+    does not affect the verdict. "It fails closed because every caller converts
+    it" is an argument about the caller, not about the source. A scenario the
+    source declines to answer demonstrates nothing.
+    """
     src = _script(tmp_path, "hang", "import sys, time; sys.stdin.read(); time.sleep(30)")
     report = check_source(src, "GV-01", kind="probe", timeout=1.0)
     assert not report.conforms
     broken = next(r for r in report.results if r.scenario == "broken")
-    assert broken.result is None and broken.ok      # not a PASS
+    assert broken.result is None and not broken.ok
+    assert "it has shown it stops" in broken.detail
     live = next(r for r in report.results if r.scenario == "live")
     assert not live.ok
 
