@@ -155,7 +155,7 @@ class GovernanceGate:
 
         # --- Evidence requirement: obligations the request must already satisfy.
         if Obligation.INDEPENDENT_VERIFICATION in obligations:
-            verdict = self._check_verifier_independence(request, capability.id, band_id)
+            verdict = self._check_verifier_independence(request, capability.id, band_id, at)
             if verdict is not None:
                 return verdict
 
@@ -374,16 +374,29 @@ class GovernanceGate:
         return None
 
     def _check_verifier_independence(
-        self, request: AuthorityRequest, capability_id: str, band_id: str
+        self, request: AuthorityRequest, capability_id: str, band_id: str, at: datetime
     ) -> Verdict | None:
-        """NX-INV-2. Returns a DENY verdict, or None if independence holds.
+        """NX-INV-2, in the three clauses ILR-001-DR W9 specifies.
 
-        Compared against every identity the request claims, not just
-        `performer`: `performer` is requester-supplied, so naming a fictitious
-        performer would otherwise let a caller verify its own work under its
-        real identity. Comparison is case-folded and stripped, because
-        `"agent-x "` and `"Agent-X"` are the same principal to everyone except
-        a raw `==`.
+        W9 reads: *deny if the verifying principal is the performing principal,
+        is controlled by it, or shares its envelope.* Two of the three are
+        enforced here:
+
+        1. **Is the performer.** Compared against every identity the request
+           claims, not just `performer`: `performer` is requester-supplied, so
+           naming a fictitious one would otherwise let a caller verify its own
+           work under its real identity. Folded, not merely case-folded, because
+           `"agent-x​"` renders identically to `"agent-x"`.
+        2. **Shares its envelope.** A verifier holding a declared bound over the
+           very target being changed is not an independent verifier; it is a
+           second party with a stake in the outcome.
+
+        The third -- *is controlled by it* -- is **not** enforced, and adding a
+        stub for it would be worse than leaving it out. It needs a principal
+        graph saying which identities control which, and no such graph exists
+        until KBS-001 T1 issues real identities. A check that always answers
+        "no control relation known" is the vacuous probe this package refuses
+        everywhere else.
         """
         verifier = (request.verifier or "").strip()
         if not verifier:
@@ -407,6 +420,23 @@ class GovernanceGate:
                     f"verifier {verifier!r} is one of the identities this request claims "
                     f"({', '.join(sorted(request.claimed_identities))})",
                     "NX-INV-2: V = 0 when performer and verifier are the same identity",
+                ],
+            )
+
+        # W9 clause three. `authority_over` folds principals aggressively and
+        # treats an uncomparable scope as overlapping, because both answers
+        # here deny.
+        shared = self.envelopes.authority_over(verifier, request.scope, at=at)
+        if shared:
+            names = ", ".join(e.id for e in shared)
+            return self._deny(
+                capability_id,
+                band_id,
+                [
+                    f"verifier {verifier!r} holds declared write authority over "
+                    f"{request.scope!r} through envelope(s) {names}",
+                    "NX-INV-2 (ILR-001-DR W9): a verifier that can change the thing it is "
+                    "verifying is a second party with a stake, not an independent one",
                 ],
             )
         return None
