@@ -1,6 +1,6 @@
 # neuraxis — Roadmap
 
-**Current:** v0.17.0 — the fourth adversarial review: the suites that certify other people's code had never had one. 4 of 10 controls wired, on an unauthenticated substrate until T1. 741 Python tests + 24 JS contract tests.
+**Current:** v0.18.0 — the fifth review, on the fourth review's fixes. They had not closed the class. 4 of 10 controls wired, on an unauthenticated substrate until T1. 747 Python tests + 24 JS contract tests.
 **To:** v1.0 — an operational governance layer for BST-SA.
 **Governing constraint:** one task at a time, CI green = done.
 
@@ -74,6 +74,7 @@ not cover it.
 | v0.15.0 ILR-001 Rev 0.2 | **shipped** |
 | v0.16.0 W8 — the register as config | **shipped** |
 | v0.17.0 fourth adversarial review (caller + source suites) | **shipped** |
+| v0.18.0 fifth review — the fourth review's fixes did not hold | **shipped** |
 | v1.0 hardening | all four items shipped; **deliberately not tagged** while zero bands are attainable — see the v1.0 section |
 
 Ask the tool rather than this table:
@@ -99,6 +100,82 @@ existed the same fact was spread across eleven separate occurrences of the
 phrase *blocked on T1*, and nobody could have told you the count. The useful
 output is now `EXTERNALS, BY OWNER`: it is the list of conversations that have
 to happen before anything else moves.
+
+---
+
+## v0.18.0 — the fifth review: the fourth review's fixes did not hold — SHIPPED
+
+v0.17.0 closed twelve findings and shipped with regression tests. An independent
+pass over **those fixes** found four callers that scored twelve out of twelve
+while being unsafe, and one source that scored five out of five performing no
+check at all.
+
+The previous release's own headline — *everything the suite treated as evidence
+was writable by the thing being measured* — was still true. The fix changed the
+evidence from a file to a socket. It did not change who could write it.
+
+### The answer key moved rather than going away
+
+`spec.json` was removed. `NEURAXIS_CONFORMANCE_SCENARIO` stayed, set for every
+scenario, marked *informational only*, with no consumer. Exactly one scenario
+expects the caller to issue, so:
+
+```python
+sys.exit(0 if os.environ["NEURAXIS_CONFORMANCE_SCENARIO"] == "allow" else 1)
+```
+
+is a complete oracle for all twelve checks — and in production, where the
+variable is unset, the same caller issues every lease unconditionally. It
+defeated the `unconfigured` scenario added in the same release **by one added
+line**, with production behaviour unchanged.
+
+It was defended in a comment: *no black-box harness can prevent a caller
+branching on harness state.* That is true of fingerprinting and was applied to
+something else. Handing the subject a variable whose value **is** the expected
+answer is not fingerprinting. The variable is gone, and the reference request is
+now minted per run so stdin is not a fingerprint either.
+
+### Two holes the fixes never covered
+
+**No scenario paired a non-zero exit with an ALLOW verdict.** Every pairing ran
+the other way. So a caller that never read the exit code at all conformed — the
+exact mirror of the module's own headline failure mode. `allow_verdict_nonzero_exit`
+closes it, and it falsifies a comfort a previous test had pinned: that checking
+the decision field covers for a wrong exit test. It covers for it only while no
+scenario tests the other direction.
+
+**`called` counted TCP connections, not gate executions.** The port is in
+`NEURAXIS_BIN_ARGS`, so a caller could open the socket itself and manufacture a
+perfect record without ever running the configured binary. The record now
+carries the gate's own argv, which a caller taking that shortcut does not have.
+A caller that also forges the argv is indistinguishable over a socket, so the
+rule text was **narrowed to what it can show** rather than left claiming more.
+
+### Three of the regression tests were vacuous
+
+Verified by reverting each fix and watching the test still pass. The worst
+pinned "principals compare strictly" and would have passed with the comparison
+fully reverted, because it exercised a case both branches reject.
+
+Chasing that found something worse: **the strict fold was not safer.** Two names
+both carrying invisible codepoints both fold to `""` and compare **equal**,
+which plain comparison catches. The rule *equality authorises, so use the strict
+fold* is about deciding whether two names denote the same principal. Fidelity is
+not that question — it asks whether the bytes the gate received are the bytes
+the caller was handed — and any normalisation is a place where a difference gets
+excused. It now compares exactly, and the test fails when that is reverted.
+
+That is the threat model's own class, *a correct argument applied one context
+too far*, committed in the fix for a finding about that class.
+
+### The source suite, again
+
+A source that is a lookup table on the scenario name conformed — it was the
+suite's own test fixture with its one deliberate defect removed. The only
+black-box signal that sees it: **a reference that does not change between runs
+is not referring to a run.** `broken` also still accepted a crash or a hang,
+because only `powerless` had been tightened, and the test that was supposed to
+cover both hung on both and passed on the strength of one.
 
 ---
 

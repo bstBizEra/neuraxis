@@ -358,7 +358,7 @@ corresponds to a confirmed exploit, and each has a regression test in
 python -m pytest -q --cov=neuraxis --cov-report=term-missing
 ```
 
-**Python:** 741 tests, 94% coverage. **JS client:** 24 contract tests. The suite includes explicit **positive controls** — `test_allows_when_everything_holds`, `test_ratified_non_delegable_capability_is_allowed`, `test_guard_decorator_runs_the_body_on_allow`. Without them, a gate that denied unconditionally would pass every other assertion in the suite. `tests/test_failclosed.py` asserts that faults become denials rather than implicit allows.
+**Python:** 747 tests, 94% coverage. **JS client:** 24 contract tests. The suite includes explicit **positive controls** — `test_allows_when_everything_holds`, `test_ratified_non_delegable_capability_is_allowed`, `test_guard_decorator_runs_the_body_on_allow`. Without them, a gate that denied unconditionally would pass every other assertion in the suite. `tests/test_failclosed.py` asserts that faults become denials rather than implicit allows.
 
 ---
 
@@ -541,7 +541,7 @@ not have to write Python to show its probe is honest. The contract is
 | `live` | run normally | emit a real evidence reference, not `"pass"` |
 | `positive` | run against a condition it must accept | report PASS — a source that cannot pass has shown nothing |
 | `negative` | run against a condition it must reject | report FAIL — a source that cannot fail is not a check |
-| `broken` | run with a dependency unavailable | never report PASS |
+| `broken` | run with a dependency unavailable | report FAIL — declining the scenario shows it stops, not that it fails closed |
 | `powerless` | run as an identity with no authority | report FAIL; a check that answers the same for a powerful and a powerless identity is checking that the machine is switched on |
 
 `positive` and `negative` are two halves of one demonstration. Until the first
@@ -600,6 +600,7 @@ which it did.
 | `silent` | exit 0, no verdict | refuse — no verdict id, so nothing could later show the lease was licensed |
 | `missing` | no binary | refuse |
 | `unconfigured` | `NEURAXIS_BIN` **unset** — the production default before anyone configures it | refuse |
+| `allow_verdict_nonzero_exit` | exit 11 **with** an ALLOW verdict | refuse — the agreement rule runs both ways |
 | `fidelity_trap` | ALLOW for a request with `verifier` removed, DENY for the faithful one | refuse |
 | `called` | — | have invoked the gate every time; a cached ALLOW is the D-03 bypass |
 | `fidelity` | — | have sent the request it was handed — unchanged, nothing added, on every call in every scenario |

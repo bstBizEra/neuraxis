@@ -81,6 +81,9 @@ SCENARIOS = ("live", "positive", "negative", "broken", "powerless")
 #: has satisfied the letter of rule 4 and none of it.
 _EMPTY_EVIDENCE = frozenset({"", "-", "n/a", "na", "none", "null", "ok", "pass", "fail", "true"})
 
+#: Shortest string that could plausibly locate a run for an auditor.
+_MIN_EVIDENCE_REF = 8
+
 DEFAULT_TIMEOUT = 30.0
 
 
@@ -229,6 +232,11 @@ def _evidence_fault(run: _Run) -> str | None:
         return "no 'evidence_ref' field"
     if ref.lower() in _EMPTY_EVIDENCE:
         return f"evidence_ref {ref!r} is a verdict, not a reference"
+    if len(ref) < _MIN_EVIDENCE_REF:
+        # `"z"` is not in the verdict list and satisfied the rule. A reference
+        # is something an auditor follows, so it has to be long enough to be
+        # one.
+        return f"evidence_ref {ref!r} is too short to locate anything"
     return None
 
 
@@ -283,10 +291,45 @@ def check_source(
     for scenario in required:
         runs[scenario] = _invoke(argv, control, scenario, timeout)
 
+    # Rule 4 is a property of the source, and used to be enforced on `live`
+    # alone. The attestations that record a FAIL are the ones an auditor reads
+    # when a band closes, and they were allowed to carry no reference and no
+    # timestamp at all.
+    thin: dict[str, str] = {}
+    for scenario in required:
+        if scenario == "live" or runs[scenario].attestation is None:
+            continue
+        late = [f for f in (_timestamp_fault(runs[scenario]), _evidence_fault(runs[scenario])) if f]
+        if late:
+            thin[scenario] = (
+                "; ".join(late)
+                + " - rule 4 is a property of the source, not of one scenario, and the "
+                "attestations that record a FAIL are the ones an auditor reads when a "
+                "band closes"
+            )
+
+    # A reference that does not change between runs is not referring to a run.
+    # This is what separates a source that performed a check from one that
+    # looked its answer up in a table keyed on the scenario name -- the cheapest
+    # useless source there is, and the only black-box signal that sees it.
+    refs = {
+        scenario: runs[scenario].evidence_ref
+        for scenario in required
+        if runs[scenario].evidence_ref
+    }
+    constant_ref = len(refs) > 1 and len(set(refs.values())) == 1
+
     # --- live: rule 4, and the output has to be usable at all.
     live = runs["live"]
+    if constant_ref:
+        live_extra = [
+            f"every scenario emitted the same evidence_ref ({next(iter(refs.values()))!r}); "
+            "a reference that does not change between runs is not referring to a run"
+        ]
+    else:
+        live_extra = []
     live_faults = [f for f in (live.parse_error, _timestamp_fault(live), _evidence_fault(live)) if f]
-    live_faults += live.faults
+    live_faults += live.faults + live_extra
     declared = live.attestation.get("control") if live.attestation else None
     if live.attestation is not None and declared != control:
         live_faults.append(f"attested {declared!r}, not the control it was asked about ({control})")
@@ -355,17 +398,20 @@ def check_source(
     elif broken.result is False:
         detail = "reported FAIL, which is the rule"
     else:
-        detail = "produced no usable attestation, which the caller must treat as FAIL"
-        warnings.append(
-            "the 'broken' scenario crashed or emitted nothing rather than reporting FAIL. "
-            "That fails closed only because every caller converts it; a source that says "
-            "FAIL is better than one that says nothing"
+        # Tightened to match `powerless`. The rule used to be `not True`, so a
+        # source that crashed or hung here conformed with a warning -- and a
+        # warning does not affect the verdict. A scenario the source declines
+        # to answer demonstrates nothing, and "it fails closed because the
+        # caller converts it" is an argument about the caller, not the source.
+        detail = (
+            "crashed or emitted nothing rather than reporting FAIL. A source that "
+            "declines the scenario has not shown it fails closed; it has shown it stops"
         )
     results.append(
         ScenarioResult(
             scenario="broken",
             rule="rule 1 - fail closed: any unexpected condition is FAIL, never PASS",
-            ok=broken.result is not True,
+            ok=broken.result is False,
             detail=detail,
             result=broken.result,
             evidence_ref=broken.evidence_ref,
@@ -411,6 +457,22 @@ def check_source(
             "An audit of a log legitimately answers the same whoever asks - but the kind "
             "comes from the registry, so check it is the right one there"
         )
+
+    # A scenario that emitted an attestation without a usable reference fails on
+    # its own row rather than in a warning nobody blocks on.
+    results = [
+        r if r.scenario not in thin else ScenarioResult(
+            scenario=r.scenario,
+            rule=r.rule,
+            ok=False,
+            detail=f"{r.detail}; but {thin[r.scenario]}",
+            result=r.result,
+            evidence_ref=r.evidence_ref,
+            exit_code=r.exit_code,
+            raw=r.raw,
+        )
+        for r in results
+    ]
 
     return ConformanceReport(
         source=shown,

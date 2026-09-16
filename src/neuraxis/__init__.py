@@ -100,7 +100,7 @@ from .resolver import BandResolver
 from .scorecard import Scorecard, measure
 from .waiver import Waiver, WaiverPolicy, WaiverRegister
 
-__version__ = "0.17.0"
+__version__ = "0.18.0"
 FRAMEWORK = "bst-neuraxis"
 PRINCIPLE = "governed-evolution"
 
