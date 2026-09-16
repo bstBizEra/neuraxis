@@ -40,6 +40,19 @@ def test_the_digest_is_of_the_bytes_on_disk():
     assert len(sha) == 64 and sha == sha.lower()
 
 
+def test_the_registry_has_no_crlf_so_the_digest_is_portable():
+    """`.gitattributes` sets `* text=auto eol=lf`. This is what depends on it.
+
+    If the registry were checked out with CRLF on Windows and LF on Linux its
+    SHA-256 would differ by platform, and the drift check would be unusable
+    across the two: CI would record one digest and the operator would compute
+    another, with nothing wrong on either side. The suite runs on both, so this
+    assertion is the guarantee rather than the configuration being the
+    guarantee.
+    """
+    assert b"\r\n" not in DEFAULT_REGISTRY.read_bytes()
+
+
 def test_a_missing_registry_is_an_error_not_a_digest(tmp_path):
     with pytest.raises(RegistryError, match="registry not found"):
         registry_digest(tmp_path / "absent.yaml")
