@@ -257,6 +257,22 @@ class Envelope:
         """
         return strict_principal(identity) == strict_principal(self.principal)
 
+    def may_bind(self, identity: str) -> bool:
+        """Whether this envelope *might* constrain `identity`.
+
+        The mirror of `bounds()`, and deliberately a separate method rather
+        than a flag on it. A True here DENIES -- it is the verifier-independence
+        question, "does this principal already hold authority over what it is
+        being asked to verify?" -- so every collision must fail closed, which
+        means the aggressive fold.
+
+        Reusing `bounds()` for this would be the same mistake the v0.9.0 review
+        found, in the same file: a fold whose safety argument holds in one
+        direction reused in the other. The two questions look identical and
+        their safe answers are opposite.
+        """
+        return normalise_principal(identity) == normalise_principal(self.principal)
+
     def covers_target(self, scope: str) -> bool:
         """True if `scope` sits at or under one of the declared targets.
 
@@ -525,6 +541,35 @@ class EnvelopeRegister:
     def active(self, at: datetime | None = None) -> tuple[Envelope, ...]:
         at = at or now_utc()
         return tuple(e for e in self._envelopes if e.is_active(at))
+
+    def authority_over(
+        self, identity: str, scope: str, *, at: datetime | None = None
+    ) -> tuple[Envelope, ...]:
+        """Active envelopes that may give `identity` write authority over `scope`.
+
+        This is the lookup behind W9's third clause -- "deny if the verifying
+        principal shares the performing principal's envelope". A verifier that
+        holds a declared bound over the very target being changed is not an
+        independent verifier; it is a second party with a stake in the outcome.
+
+        Two deliberate asymmetries with the authorising path:
+
+        * principals are matched with `may_bind`, the aggressive fold, because
+          a match here denies;
+        * a scope that cannot be compared to a target -- a traversal component,
+          a mixed separator, an invisible character -- returns **every** active
+          envelope binding the identity rather than none. On the authorising
+          path an uncomparable scope is outside every envelope; here that same
+          answer would read as "this verifier has no authority", which is a
+          conclusion nobody is entitled to draw from a string nobody can parse.
+        """
+        at = at or now_utc()
+        binding = tuple(e for e in self.active(at) if e.may_bind(identity))
+        if not binding:
+            return ()
+        if _path_parts(scope) is None:
+            return binding
+        return tuple(e for e in binding if e.covers_target(scope))
 
     @staticmethod
     def append_to_file(path: str | Path, envelope: Envelope) -> None:

@@ -551,3 +551,44 @@ substantive ones.
 conformance shows a source *can* fail, not that it fails when it should. It
 closes the case that actually happens: a check that was correct when written
 and has since stopped exercising anything, still reporting green.
+
+## Verifier independence, in full
+
+ILR-001-DR W9 — the highest-ranked item in the register — reads: *deny if the
+verifying principal is the performing principal, **is controlled by it**, or
+**shares its envelope***.
+
+```
+DENY IL-06 (BAND-B)
+  - verifier 'agent-motor' holds declared write authority over 'bst-sa/pipelines'
+    through envelope(s) ENV-MOTOR
+  - NX-INV-2 (ILR-001-DR W9): a verifier that can change the thing it is
+    verifying is a second party with a stake, not an independent one
+```
+
+| Clause | Enforced |
+|---|---|
+| is the performer | yes — against every identity the request claims, folded so an invisible codepoint cannot disguise one |
+| shares its envelope | yes — the verifier may not hold a declared bound over the scope being verified |
+| is controlled by it | **no**, and deliberately not stubbed |
+
+**The last row is the interesting one.** It needs a principal graph saying which
+identities control which, and none exists until KBS-001 T1 issues real
+identities. A check that always answers "no control relation known" would pass
+every test and check nothing — the vacuous probe this package refuses
+everywhere else. Its absence is asserted by a test, so adding one has to be a
+deliberate act with a real graph behind it.
+
+**Two principal comparisons, opposite directions.** `Envelope.bounds()` asks
+*does this envelope bound you?* — a match authorises, so it compares strictly
+and `agent-motor` and `agent-mötor` stay two principals. `Envelope.may_bind()`
+asks *might this verifier already hold authority here?* — a match denies, so it
+folds aggressively and those two collapse into one. Same-looking question,
+opposite safe answer. They are two methods rather than one with a flag, and a
+test asserts they disagree exactly where intended.
+
+**And a scope nobody can parse is not an absence of authority.** On the
+authorising path an uncomparable scope is outside every envelope; here it
+returns *every* active envelope binding the verifier, because "nobody can
+compare this string" is not a basis for concluding "this verifier holds
+nothing".

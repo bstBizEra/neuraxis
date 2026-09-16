@@ -1,6 +1,6 @@
 # neuraxis — Roadmap
 
-**Current:** v0.11.0 - every v1.0 item shipped, and deliberately not tagged v1.0 while zero bands are attainable. 4 of 10 controls wired, on an unauthenticated substrate until T1. 560 Python tests + 19 JS contract tests.
+**Current:** v0.12.0 - W9's envelope clause: a verifier may not hold authority over what it verifies. 4 of 10 controls wired, on an unauthenticated substrate until T1. 582 Python tests + 19 JS contract tests.
 **To:** v1.0 (operational governance layer for BST-SA)
 **Governing constraint:** one task at a time, CI green = done.
 
@@ -16,6 +16,7 @@
 | v0.8.0 waivers + monotonicity (D-05/D-06) | **shipped** |
 | v0.9.0 bounded self-tuning (D-01) | **shipped** |
 | v0.10.0 drift check + operator runbook | **shipped** |
+| v0.12.0 W9 envelope clause | **shipped** |
 | v0.6 service mode | not until a caller needs it |
 | v0.11.0 conformance suite | **shipped** |
 | v1.0 hardening | **all four items shipped** (v0.6.0 review, threat model, v0.10.0 runbook, v0.11.0 conformance suite). **Deliberately not tagged v1.0** while zero bands are attainable — see the v1.0 section |
@@ -593,3 +594,77 @@ wearing different clothes.
 
 v1.0 is earned when a band can actually open - not when the package's own
 checklist runs out.
+
+---
+
+## v0.12.0 - W9's third clause - SHIPPED
+
+ILR-001-DR ranks **W9 the highest item in the register** (4.80) and describes it
+in three clauses: *deny if the verifying principal is the performing principal,
+**is controlled by it**, or **shares its envelope***.
+
+| Clause | State |
+|---|---|
+| is the performer | shipped v0.6.0, hardened v0.8.0 against the invisible-codepoint bypass |
+| **shares its envelope** | **v0.12.0** |
+| is controlled by it | **deliberately absent** - see below |
+
+The second clause became checkable the moment envelopes existed (v0.9.0) and
+had not been checked. The gate now denies when the named verifier holds a
+declared envelope giving it write authority over the scope being verified:
+
+```
+DENY IL-06 (BAND-B)
+  - verifier 'agent-motor' holds declared write authority over 'bst-sa/pipelines'
+    through envelope(s) ENV-MOTOR
+  - NX-INV-2 (ILR-001-DR W9): a verifier that can change the thing it is
+    verifying is a second party with a stake, not an independent one
+```
+
+**The fold runs the other way here, and that is the whole point.** The
+authorising question - *does this envelope bound you?* - compares principals
+strictly, because a collision there widens a grant to a principal that was
+never named. This question - *does this verifier already hold authority over
+what it is verifying?* - denies on a match, so a collision must fail closed and
+the comparison folds aggressively. `Envelope.bounds()` and `Envelope.may_bind()`
+are therefore two methods rather than one with a flag, and a test asserts they
+disagree exactly where intended: `agent-motor` and `agent-mötor` stay two
+principals for `bounds()` and collapse into one for `may_bind()`.
+
+Reusing one for the other would have been the same mistake the v0.9.0 review
+found, in the same file, one release later. The threat model calls this class
+*a correct argument applied one context too far*; this is what acting on it
+looks like.
+
+**A scope nobody can parse is not an absence of authority.** On the authorising
+path, a scope carrying a traversal component or an invisible character is
+outside every envelope. Here the same answer would read as "this verifier holds
+nothing", which is a conclusion nobody is entitled to draw from a string nobody
+can compare - so an uncomparable scope returns *every* active envelope binding
+the verifier, and the request is denied.
+
+### The clause that is missing, and why it stays missing
+
+*Is controlled by it* needs a principal graph saying which identities control
+which. No such graph exists until KBS-001 T1 issues real identities, and a
+check that always answers "no control relation known" is precisely the vacuous
+probe this package refuses everywhere else. It would pass every test and check
+nothing.
+
+Its absence is asserted by a test, so adding one has to be a deliberate act
+with a real graph behind it rather than a line someone adds to make a docstring
+match. The same test pins a nearby judgement call: two principals whose
+envelopes share a *signer* are **not** treated as one controlling the other.
+That may be the right relation to encode later; it is not a guess to make now.
+
+### What this does and does not move
+
+W9 is two-thirds enforced. **The freeze in ILR-001-DR §3.3 is unaffected**, and
+this is worth being plain about: the freeze lifts when W9 and W2 are live, and
+both are specified *at lease issuance* - which is L0's half, not this package's.
+Neuraxis can deny a request that names a conflicted verifier. It cannot stop a
+lease being issued without asking, because it is not the thing issuing leases.
+
+So the next decision on this path is not T1. It is **whether L0 gets a lease
+API the gate is called from** - the question that lifts a freeze that has been
+in force since the register was written.
