@@ -358,7 +358,7 @@ corresponds to a confirmed exploit, and each has a regression test in
 python -m pytest -q --cov=neuraxis --cov-report=term-missing
 ```
 
-**Python:** 722 tests, 94% coverage. **JS client:** 24 contract tests. The suite includes explicit **positive controls** — `test_allows_when_everything_holds`, `test_ratified_non_delegable_capability_is_allowed`, `test_guard_decorator_runs_the_body_on_allow`. Without them, a gate that denied unconditionally would pass every other assertion in the suite. `tests/test_failclosed.py` asserts that faults become denials rather than implicit allows.
+**Python:** 741 tests, 94% coverage. **JS client:** 24 contract tests. The suite includes explicit **positive controls** — `test_allows_when_everything_holds`, `test_ratified_non_delegable_capability_is_allowed`, `test_guard_decorator_runs_the_body_on_allow`. Without them, a gate that denied unconditionally would pass every other assertion in the suite. `tests/test_failclosed.py` asserts that faults become denials rather than implicit allows.
 
 ---
 
@@ -539,9 +539,14 @@ not have to write Python to show its probe is honest. The contract is
 | Scenario | The source should | Rule |
 |---|---|---|
 | `live` | run normally | emit a real evidence reference, not `"pass"` |
-| `broken` | run with a dependency unavailable | never report PASS |
+| `positive` | run against a condition it must accept | report PASS — a source that cannot pass has shown nothing |
 | `negative` | run against a condition it must reject | report FAIL — a source that cannot fail is not a check |
-| `powerless` | run as an identity with no authority | not pass; a check that answers the same for a powerful and a powerless identity is checking that the machine is switched on |
+| `broken` | run with a dependency unavailable | never report PASS |
+| `powerless` | run as an identity with no authority | report FAIL; a check that answers the same for a powerful and a powerless identity is checking that the machine is switched on |
+
+`positive` and `negative` are two halves of one demonstration. Until the first
+existed, a source hardcoded to `{"result": false}` satisfied every rule — safe,
+useless, and certified.
 
 **The kind comes from the registry, not the source.** `powerless` is required
 only for a control declared `kind: probe`. A source that could declare its own
@@ -594,8 +599,16 @@ which it did.
 | `contradiction` | exit 0, verdict says DENY | refuse the whole run; one of the two is wrong and there is no telling which |
 | `silent` | exit 0, no verdict | refuse — no verdict id, so nothing could later show the lease was licensed |
 | `missing` | no binary | refuse |
+| `unconfigured` | `NEURAXIS_BIN` **unset** — the production default before anyone configures it | refuse |
+| `fidelity_trap` | ALLOW for a request with `verifier` removed, DENY for the faithful one | refuse |
 | `called` | — | have invoked the gate every time; a cached ALLOW is the D-03 bypass |
-| `fidelity` | — | have sent the request it was handed, unchanged |
+| `fidelity` | — | have sent the request it was handed — unchanged, nothing added, on every call in every scenario |
+
+**The scripted gate runs inside the harness, and its reply depends on the request.**
+That is what makes `fidelity_trap` possible: the caller a real team writes under
+schedule pressure asks faithfully, gets a DENY, decides the verifier field is
+confusing it, retries without it, and honours *that*. A gate whose answer never
+varies with its input cannot see this at all.
 
 **`fidelity` is the one that earns the suite its place.** The reference request
 names `agent-motor` as both performer and its own verifier, so a faithful caller

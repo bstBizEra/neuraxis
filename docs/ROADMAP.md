@@ -1,6 +1,6 @@
 # neuraxis — Roadmap
 
-**Current:** v0.16.0 — W8: the register watches its own rulings. 4 of 10 controls wired, on an unauthenticated substrate until T1. 722 Python tests + 24 JS contract tests.
+**Current:** v0.17.0 — the fourth adversarial review: the suites that certify other people's code had never had one. 4 of 10 controls wired, on an unauthenticated substrate until T1. 741 Python tests + 24 JS contract tests.
 **To:** v1.0 — an operational governance layer for BST-SA.
 **Governing constraint:** one task at a time, CI green = done.
 
@@ -73,6 +73,7 @@ not cover it.
 | v0.14.0 the plan becomes a graph | **shipped** |
 | v0.15.0 ILR-001 Rev 0.2 | **shipped** |
 | v0.16.0 W8 — the register as config | **shipped** |
+| v0.17.0 fourth adversarial review (caller + source suites) | **shipped** |
 | v1.0 hardening | all four items shipped; **deliberately not tagged** while zero bands are attainable — see the v1.0 section |
 
 Ask the tool rather than this table:
@@ -98,6 +99,85 @@ existed the same fact was spread across eleven separate occurrences of the
 phrase *blocked on T1*, and nobody could have told you the count. The useful
 output is now `EXTERNALS, BY OWNER`: it is the list of conversations that have
 to happen before anything else moves.
+
+---
+
+## v0.17.0 — the fourth adversarial review — SHIPPED
+
+Three reviews had been run on the gate: v0.6.0 (9 findings), v0.8.0 (11),
+v0.9.0 (15). The suites that certify *other people's* code — the assurance
+account's probe, L0's lease issuer, BADF's export — had never had one, and four
+releases had shipped since the last pass.
+
+Two independent reviewers were given `caller.py`, `conformance.py`,
+`roadmap.py` and `register.py` and asked one question each: *can something
+unsafe pass this?* They returned 22 findings. Every one was reproduced against
+the live tree before anything was changed; **one did not survive** and is
+recorded below.
+
+### The finding that mattered
+
+**A caller that never executed a gate scored twelve out of twelve.**
+
+The harness wrote each scenario's answer to `spec.json` and the invocation log
+to `invocations.jsonl`, both in a directory whose absolute path it handed to the
+caller in `NEURAXIS_BIN_ARGS`. So the caller could read the verdict it was about
+to be "given", append a forged record, and exit accordingly. `called` — the
+check whose own rule text says *"a lease granted without calling the gate is the
+D-03 bypass, and the exit code cannot show it"* — reported nine invocations.
+
+**Everything the suite treated as evidence was writable by the thing being
+measured.** Nine of the twelve checks read the caller's exit code; the other
+three read a file in a directory the harness had named to it.
+
+The scripted gate now **runs inside the harness** and records server-side. The
+caller can still read the stub and find the port — that is fine and is the
+point: to learn the verdict it must make the request, and the harness is what
+records that it did.
+
+### And the reply can now depend on the request
+
+A fixed-answer stub cannot observe *doctoring*, because nothing the caller does
+to the request changes what comes back. The new `fidelity_trap` scenario allows
+a request that has had `verifier` removed and denies the faithful one — so the
+caller a real team writes under schedule pressure (ask faithfully, get a DENY,
+conclude the verifier field is confusing it, retry without it, honour *that*)
+visibly issues where it must refuse. That caller previously conformed.
+
+### `fidelity` asked the question one way round
+
+It walked the expected fields asking *was anything lost*. The dangerous
+direction is the other one. `ratification_ref` is a known optional field, so it
+survives parsing, and any non-blank string clears the non-delegable floor and
+the GV-07 requirement. A caller that appended one was reported as *"every field
+reached the gate unchanged"* — truthfully, and uselessly.
+
+Fidelity now compares key sets, runs on **every call in every scenario** rather
+than the last call of `allow`, and compares principals with `strict_principal`,
+because equality there certifies the caller and this package has a rule about
+comparisons where equality authorises.
+
+### The source suite had the same two holes
+
+A source hardcoded to `{"result": false}` conformed: rule 2 was labelled
+*positive control* and only proved a source could emit FAIL. `positive` is now
+its own scenario. And a source that **declined** the vacuity scenario conformed,
+reported as *"distinguishes a powerless identity from a powerful one"* — it
+crashed. `powerless` now requires an explicit FAIL.
+
+### One finding did not survive
+
+A reviewer reported `strict_principal` as dead code, with `Envelope.bounds()`
+using the aggressive fold — which would have been the v0.9.0 regression for a
+third time. It read a stale `envelope.py` from an earlier upload. In the live
+tree `strict_principal` is used at `envelope.py:258` and `:441`, exactly where
+designed. **Recorded rather than quietly dropped**, because an unreproduced
+finding that gets fixed anyway is how a codebase accumulates defences against
+things that never happened.
+
+Ten findings in `roadmap.py` and `register.py` are confirmed and **not yet
+fixed** — they are the next release. The two suites were done first because they
+certify code written outside this repository.
 
 ---
 

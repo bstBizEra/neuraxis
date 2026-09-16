@@ -189,3 +189,24 @@ black-box suite, `neuraxis caller-conform`.
 The two failures rhyme. A source that cannot fail is not a check; a caller that
 cannot refuse is not a gate client. Both pass every test their authors would
 think to write.
+
+---
+
+## The fourth review changed two rules here
+
+An adversarial pass on this suite (v0.17.0) found two sources that conformed and
+should not have.
+
+**A source hardcoded to `{"result": false}`.** Rule 2 was labelled *positive
+control* and only ever proved a source could emit FAIL. `positive` is now its
+own scenario: the source is run against a condition it must accept, and must
+report PASS. A source that can only say one of the two words has demonstrated
+nothing.
+
+**A source that declined the vacuity scenario.** The rule was *not (live and
+powerless)*, so a source that crashed, hung, or emitted a non-boolean produced
+`result is None`, satisfied it, and was reported as *"distinguishes a powerless
+identity from a powerful one"*. It distinguished nothing. `powerless` now
+requires an explicit FAIL. A scenario the source declines to answer is not a
+demonstration, and saying otherwise in the field a reviewer reads is worse than
+failing.

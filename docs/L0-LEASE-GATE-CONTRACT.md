@@ -182,12 +182,16 @@ The caller under test is an executable that issues one lease: it reads the reque
 | `contradiction` | exit 0, but the verdict says DENY | refuse |
 | `silent` | exit 0, nothing on stdout | refuse |
 | `missing` | the binary does not exist | refuse |
-| `called` | — | have invoked the gate in every scenario above |
-| `fidelity` | — | have sent the gate the request it was handed, unchanged |
+| `unconfigured` | `NEURAXIS_BIN` is **unset** — the production default before anyone configures it | refuse |
+| `fidelity_trap` | ALLOW for a request with `verifier` removed, DENY for the faithful one | refuse |
+| `called` | — | have invoked the gate in every scenario that offered one |
+| `fidelity` | — | have sent the gate the request it was handed — unchanged, nothing added, on **every** call in **every** scenario |
 
 `allow` is the positive control, and it is there for the same reason `conform`'s `powerless` scenario is there: without it, a caller that refuses everything scores nine out of nine. A lease issuer that never issues is an outage wearing a gate's clothes.
 
 `called` catches the grant that never asked. A cached earlier ALLOW, a fast path for renewals, a widening that reuses the original decision — none of these is visible in an exit code, and each is the D-03 bypass.
+
+`fidelity_trap` is the scenario that catches the caller a real team writes under schedule pressure: ask faithfully, get a DENY, then *"maybe the verifier field is confusing it"* — retry without it and honour that answer. The scripted gate's reply depends on the request, so the retry visibly issues where it must refuse. A gate whose answer never varies with its input cannot test this at all, which is why the harness now runs a real responder rather than replaying a fixed answer.
 
 `fidelity` is the check that earns the suite its place. The reference request names `agent-motor` as both the performing principal and its own verifier, so a faithful caller gets a DENY out of a real gate. A caller that drops `verifier` gets an ALLOW instead, and **nothing between the two reports an error.** No log line, no exception, no failing test that anyone would have thought to write. The suite compares what reached the gate against what the caller was handed, field by field, and parses it with the gate's own `AuthorityRequest.from_dict` rather than a second copy of the rules.
 
@@ -205,7 +209,7 @@ Three things, stated plainly because a suite that oversells itself is worse than
 
 1. **It proves the entry point it was given.** D-03 has five call sites. A caller conforming at `lease_issue` says nothing about `lease_widen`. Each needs its own conforming entry point, and the count is published in the CLI's own output so the claim cannot be quietly rounded up.
 2. **It does not test the timeout**, because testing a hang means waiting on one. §5 requires a hard timeout treated as refusal; that requirement is unproven here.
-3. **`NEURAXIS_CONFORMANCE_SCENARIO` is set in the caller's environment** for logging. A caller that branches on it is testing its way past the suite rather than through it. No black-box harness can prevent that, and pretending otherwise would be the vacuous-probe failure this package refuses everywhere else.
+3. **`NEURAXIS_CONFORMANCE_SCENARIO` is set in the caller's environment** for logging. A caller that branches on it is testing its way past the suite rather than through it. No black-box harness can prevent that, and pretending otherwise would be the vacuous-probe failure this package refuses everywhere else. It is, however, now the *only* harness state the caller is handed: an adversarial review built a caller that read the scenario's answer out of a file the harness had named to it and forged the invocation log, scoring twelve out of twelve without ever executing a gate. The scripted gate now runs inside the harness and records server-side, so the verdict cannot be learned without making the request.
 
 ---
 

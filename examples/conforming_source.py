@@ -8,15 +8,21 @@ stdin, do the check, write one JSON attestation on stdout.
 What makes it conform is not the shape of the file. It is that each scenario
 does something real:
 
-  live       run the check for a principal that should pass
+  live       run the check normally, and emit a real evidence reference
+  positive   run it against a condition it must accept, and report PASS
+  negative   run it against a condition it must reject, and report FAIL
   broken     run it with the thing it depends on unavailable -- and report
              FAIL, rather than deciding absence means nothing is wrong
-  negative   run it against a condition it must reject, and report FAIL
   powerless  run it as an identity with no authority, and report FAIL
 
-The last one is what separates a probe from a decoration. A check that answers
+`positive` and `negative` are the two halves of one demonstration: a source
+that can only ever say one of the two words has not shown a check. Hardcoding
+`{"result": false}` is safe, useless, and satisfies every other rule.
+
+`powerless` is what separates a probe from a decoration. A check that answers
 the same for a powerful and a powerless identity is not checking authority; it
-is checking that the machine is switched on.
+is checking that the machine is switched on. Declining to answer it is not a
+demonstration either -- report FAIL.
 
 The "check" below is a stand-in -- it asks whether a principal appears in an
 access list. Replace the body of `_has_access` with the real probe and keep the
@@ -51,6 +57,7 @@ def main() -> int:
 
     identity = {
         "live": "kernel-admin",
+        "positive": "kernel-admin",
         "broken": "kernel-admin",
         "negative": "kernel-admin",
         "powerless": "nobody-at-all",
