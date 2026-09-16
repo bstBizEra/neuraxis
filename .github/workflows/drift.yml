@@ -1,0 +1,96 @@
+name: drift
+
+# KBS-001 K-09. The roadmap's weekly job: "drift check on the registry against
+# its ratified version". The registry is kernel; a release records the SHA-256
+# of the bytes that were ratified, and this asks whether main still holds them.
+#
+# Why this does not simply fail on any difference: during development the
+# kernel legitimately moves ahead of the last release, so a check that went red
+# the moment it did would be red most of the time and ignored all of it - which
+# is the erosion this framework exists to prevent, arriving through its own
+# monitoring. So a difference is reported always and fails only once the kernel
+# has been sitting unratified for longer than the window the registry itself
+# uses for config-driven controls: 7 days.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"     # Mondays, 06:17 UTC. Off the hour on purpose.
+  workflow_dispatch:
+    inputs:
+      strict:
+        description: Fail on any difference, not only one older than the grace window
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: kernel registry vs ratified digest
+    runs-on: ubuntu-latest
+    env:
+      GRACE_DAYS: "7"
+      REGISTRY: src/neuraxis/config/neuraxis.yaml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install the package
+        run: python -m pip install -e .
+
+      - name: Fetch the ratified digest from the latest release
+        id: ratified
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release list --limit 1 --json tagName --jq '.[0].tagName // empty')
+          if [ -z "$tag" ]; then
+            echo "::notice::no release exists yet, so there is no ratified version to compare against"
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if ! gh release download "$tag" --pattern REGISTRY-DIGEST.txt --dir ratified; then
+            echo "::warning::release $tag carries no REGISTRY-DIGEST.txt; it predates release.yml"
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "have=true" >> "$GITHUB_OUTPUT"
+          cat ratified/REGISTRY-DIGEST.txt
+
+      - name: Compare
+        if: steps.ratified.outputs.have == 'true'
+        run: |
+          tag='${{ steps.ratified.outputs.tag }}'
+          code=0
+          neuraxis drift --expect-file ratified/REGISTRY-DIGEST.txt || code=$?
+
+          if [ "$code" = "0" ]; then
+            echo "::notice::kernel registry matches the ratified digest for $tag"
+            exit 0
+          fi
+          if [ "$code" != "10" ]; then
+            echo "::error::drift check failed to run (exit $code)"
+            exit 1
+          fi
+
+          # Diverged. How long has it been sitting unratified?
+          changed=$(git log -1 --format=%ct -- "$REGISTRY")
+          age_days=$(( ( $(date +%s) - changed ) / 86400 ))
+          echo "kernel registry last changed ${age_days}d ago; ratified version is $tag"
+
+          if [ "${{ inputs.strict }}" = "true" ]; then
+            echo "::error::strict mode: the kernel registry is not the ratified one"
+            exit 1
+          fi
+          if [ "$age_days" -gt "$GRACE_DAYS" ]; then
+            echo "::error::the kernel registry has been unratified for ${age_days}d (grace ${GRACE_DAYS}d). Cut a release or revert the change - an unratified kernel is one nothing can be attested against."
+            exit 1
+          fi
+          echo "::warning::the kernel registry has moved since $tag (${age_days}d ago). Within the ${GRACE_DAYS}d grace window; cut a release before it closes."

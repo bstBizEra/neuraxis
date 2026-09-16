@@ -1,6 +1,6 @@
 # neuraxis — Roadmap
 
-**Current:** v0.9.0 - bounded self-tuning: IL-13a admissible from Band C inside a declared, machine-evaluable envelope. 4 of 10 controls wired, on an unauthenticated substrate until T1. 492 Python tests + 19 JS contract tests.
+**Current:** v0.10.0 - the kernel drift check is a control, not an artifact. 4 of 10 controls wired, on an unauthenticated substrate until T1. 516 Python tests + 19 JS contract tests.
 **To:** v1.0 (operational governance layer for BST-SA)
 **Governing constraint:** one task at a time, CI green = done.
 
@@ -15,6 +15,7 @@
 | v0.7.0 evidence records | **shipped** |
 | v0.8.0 waivers + monotonicity (D-05/D-06) | **shipped** |
 | v0.9.0 bounded self-tuning (D-01) | **shipped** |
+| v0.10.0 drift check + operator runbook | **shipped** |
 | v0.6 service mode | not until a caller needs it |
 | v1.0 hardening | **partially shipped as v0.6.0** — review done, fixable findings closed, structural limits documented |
 
@@ -443,3 +444,66 @@ and no attestation, waiver, envelope or evidence record is tracked.
 **§8 is a residual risk register**, and R1-R6 are all Critical or High and all
 closed by T1 and nothing else. That is the document's real conclusion: no
 further work inside this package moves them, and has not since v0.3.
+
+---
+
+## v0.10.0 - The drift check becomes a control - SHIPPED
+
+The previous entry made a release carry the SHA-256 of the kernel registry. An
+artifact is not a control, so this turns it into one.
+
+| Piece | Detail |
+|---|---|
+| `neuraxis validate` | reports `registry_path` and `registry_sha256` |
+| `neuraxis drift` | `--expect <sha>` or `--expect-file REGISTRY-DIGEST.txt`; exit 0 match, 10 drift, 2 unreadable |
+| `.github/workflows/drift.yml` | weekly, compares `main` against the latest release's ratified digest |
+| `docs/RUNBOOK.md` | the v1.0 operator runbook |
+
+**The digest is of the bytes on disk, not the parsed document.** It has to equal
+what `sha256sum` prints, because the operator at 02:00 has `sha256sum` and a
+number only this tool can reproduce would be useless to them.
+
+**An expectation that cannot be read is an error, never a pass.** A `--expect`
+that is not 64 hex characters, a `--expect-file` that is missing or carries no
+`sha256` line, both flags at once: all exit 2. A drift check that reads an
+unparseable expectation as "nothing to compare" reports clean for a file nobody
+could parse, which is the vacuous probe in its cheapest form.
+
+**The weekly job does not fail on any difference.** During development the
+kernel legitimately moves ahead of the last release, so a check that went red
+the moment it did would be red most of the time and ignored all of it - the
+erosion this framework exists to prevent, arriving through its own monitoring.
+A difference is reported every run and fails only once the kernel has been
+unratified for more than 7 days, the same window the registry uses for its
+config-driven controls. `workflow_dispatch` with `strict: true` fails on any
+difference, for use before cutting a release.
+
+### The runbook, and what it refuses to say
+
+`docs/RUNBOOK.md` closes the last v1.0 documentation item. Its first line is
+that **a closed band is not an incident by default** - it means a control
+stopped being proven, which is the system working.
+
+Two distinctions it exists to make at 02:00:
+
+- **`attestation expired` versus `last attestation FAILED`.** The first is a
+  scheduled run that did not happen; the second is a control that was holding
+  and has stopped. Completely different problems, one line apart in `status`.
+- **Proven-and-stopped versus never-proven.** Six controls have no provider and
+  three of those wait on T1. If the blocker is GV-01, GV-03 or GV-08 there is
+  no operational fix and no waiver path, and §6 says so rather than sending the
+  operator looking for one.
+
+§7 lists what never appears in a restoration sequence: editing the registry,
+extending a window, waiving a non-compensable control, or re-running `attest`
+by hand with `--result pass`. The last is the worst - it records an assertion
+where a provider result should be, and `provenance` says `manual` in the
+evidence forever.
+
+**Acceptance - met**
+
+- [x] The digest matches `sha256sum` on the same file
+- [x] One changed byte is detected against the ratified digest
+- [x] Every unreadable expectation exits 2, and none of them exits 0
+- [x] A release-format `REGISTRY-DIGEST.txt`, a bare digest, and a BOM-prefixed file all parse
+- [x] `drift` refuses to report on a registry that does not load

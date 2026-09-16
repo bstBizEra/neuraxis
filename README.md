@@ -460,3 +460,47 @@ may be *named*; it does not make the naming authentic. Unlike the rest of the
 limits in this README, this one does not close when the allowlist is populated -
 it closes when KBS-001 T1 gives the envelope file a kernel write path and real
 signing keys.
+
+## Drift — is the kernel registry the ratified one?
+
+The registry is kernel under KBS-001. The roadmap prescribes a weekly drift
+check of it "against its ratified version", which was an inert sentence while
+no version was ratified. Releases now carry the SHA-256 of the exact bytes that
+shipped, so the check is one comparison:
+
+```bash
+neuraxis validate            # ... registry: .../neuraxis.yaml   sha256: 7be0bd56...
+
+gh release download v0.10.0 --pattern REGISTRY-DIGEST.txt
+neuraxis drift --expect-file REGISTRY-DIGEST.txt
+#  MATCH: the registry on disk is the ratified one.        -> exit 0
+#  DRIFT: ... Do not attest anything against it ...        -> exit 10
+```
+
+The digest is of the **bytes on disk**, not the parsed document, so it equals
+what `sha256sum` prints. The operator at 02:00 has `sha256sum`; a number only
+this tool can reproduce would be useless to them.
+
+**A mismatch is not automatically an incident**, and the two causes need
+opposite responses: either someone changed the kernel without a release, or you
+are not running the version you think you are. `docs/RUNBOOK.md` §4 has both.
+
+An expectation that cannot be read is an **error**, never a pass. A drift check
+that reports clean for a file nobody could parse is the vacuous probe in its
+cheapest form.
+
+The weekly `drift` workflow reports a difference every run and fails only once
+the kernel has been unratified for more than 7 days — the same window the
+registry uses for its config-driven controls. A check that went red the moment
+the kernel moved would be red most of the time and ignored all of it, which is
+the erosion this package exists to prevent, arriving through its own monitoring.
+
+## Operating it
+
+[`docs/RUNBOOK.md`](docs/RUNBOOK.md) — what to do when a band closes at 02:00,
+what every exit code means, how to tell *proven-and-stopped* from
+*never-proven*, and the five things never to do to make a red go away.
+
+The short version: **a closed band is not an incident by default.** It means a
+control stopped being proven, which is the system working. It becomes an
+incident when a band something depends on closes and nobody notices.
