@@ -357,7 +357,7 @@ corresponds to a confirmed exploit, and each has a regression test in
 python -m pytest -q --cov=neuraxis --cov-report=term-missing
 ```
 
-**Python:** 659 tests, 94% coverage. **JS client:** 24 contract tests. The suite includes explicit **positive controls** — `test_allows_when_everything_holds`, `test_ratified_non_delegable_capability_is_allowed`, `test_guard_decorator_runs_the_body_on_allow`. Without them, a gate that denied unconditionally would pass every other assertion in the suite. `tests/test_failclosed.py` asserts that faults become denials rather than implicit allows.
+**Python:** 680 tests, 94% coverage. **JS client:** 24 contract tests. The suite includes explicit **positive controls** — `test_allows_when_everything_holds`, `test_ratified_non_delegable_capability_is_allowed`, `test_guard_decorator_runs_the_body_on_allow`. Without them, a gate that denied unconditionally would pass every other assertion in the suite. `tests/test_failclosed.py` asserts that faults become denials rather than implicit allows.
 
 ---
 

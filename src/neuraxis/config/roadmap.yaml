@@ -193,6 +193,27 @@ items:
         id: T1
     note: What turns the evidence sink into an assurance capability.
 
+  - id: ILR-REV
+    title: ILR-001 amended to match its own rulings
+    register_ref: enforcement-status closing note
+    score: null
+    state: shipped
+    owner: neuraxis
+    shipped_in: [v0.15.0]
+    gates: []
+    acceptance:
+      - kind: command
+        run: ["python", "-m", "pytest", "-q", "tests/test_ilr001.py"]
+        proves: >-
+          The published Capability-Authority Gate matrix equals the shipped
+          registry, and every capability sits under the band the registry
+          assigns it.
+    note: >-
+      v0.1 predated the register. Rev 0.2 amends the four sections the register
+      changed, adds the three rulings that landed after, and restates section 10
+      as attestation rather than judgement - which changes every row to "not
+      attained".
+
   - id: W8
     title: The decision register as machine-readable config
     register_ref: section 3.2 Stage 2

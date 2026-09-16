@@ -1,6 +1,6 @@
 # neuraxis — Roadmap
 
-**Current:** v0.14.0 — the plan becomes a graph. 4 of 10 controls wired, on an unauthenticated substrate until T1. 659 Python tests + 24 JS contract tests.
+**Current:** v0.15.0 — ILR-001 Rev 0.2: the framework document amended to match its own rulings. 4 of 10 controls wired, on an unauthenticated substrate until T1. 680 Python tests + 24 JS contract tests.
 **To:** v1.0 — an operational governance layer for BST-SA.
 **Governing constraint:** one task at a time, CI green = done.
 
@@ -71,6 +71,7 @@ not cover it.
 | v0.12.0 W9 envelope clause | **shipped** |
 | v0.13.0 L0 integration contract (D-07) | **shipped** |
 | v0.14.0 the plan becomes a graph | **shipped** |
+| v0.15.0 ILR-001 Rev 0.2 | **shipped** |
 | v1.0 hardening | all four items shipped; **deliberately not tagged** while zero bands are attainable — see the v1.0 section |
 
 Ask the tool rather than this table:
@@ -90,6 +91,51 @@ is the plan being honest: everything else waits on T1, on an L0 entry point, or
 on a band that cannot open until T1 lands. Before the graph existed, the same
 fact was spread across eleven separate occurrences of the phrase *blocked on
 T1*, and nobody could have told you the count.
+
+---
+
+## v0.15.0 — ILR-001 catches up with its own rulings — SHIPPED
+
+`docs/ILR-001-neuraxis.md` was still at **v0.1 DRAFT** — written *before* the
+decision register existed. The register then amended four of its sections, three
+more rulings landed after, and everything built since was built against the
+register. Three companion docs recorded the gap in the same sentence: *"before
+external issue"*.
+
+Rev 0.2 closes it. Every amendment is traceable to the ruling that made it:
+
+| Section | Was | Now | Ruling |
+|---|---|---|---|
+| §4 | IL-13 relocated wholesale to Band G | **Split**: IL-13a Band C envelope-bounded, IL-13b Band G | D-01 |
+| §4 | — | Ordinal attainment claims prohibited externally | D-02 |
+| §5.4/5.5 | — | Monotonicity as NX-INV-5; the waiver contract; the non-compensable floor as NX-INV-4 | D-05, D-06 |
+| §6.1 | `[GOVERNANCE GATE]` between DECIDE and ACT | Gate removed from the per-task path; fires on five authority-changing events | D-03 |
+| §6.4 | "invoked by all three loops" | Synchronous at grant + async revoke-only observer | D-03 |
+| §6.6 | — | The caller boundary and its conformance requirement | D-07 |
+| §7 | Formula, operational, with a caveat | Boolean precondition set; formula retired to non-normative | D-04 |
+| §8 | An inline copy of the registry YAML | The copy removed; §5.3's matrix pinned to the registry by a test | — |
+| §10 | Bands assessed by judgement | **Zero bands attained**, restated as attestation | D-02 |
+| §11 | Six open decisions | All ruled; six items that remain open, each with why it is the operator's | — |
+
+**§10 is the row worth dwelling on.** v0.1 said *Band A attained, Band B
+attained in practice*. The attested answer is **zero bands**, because four of ten
+controls have a wired provider and none is currently attested. That is not the
+system getting worse; it is the difference between recording judgement and
+recording attestation, which is the whole point of D-02. Both columns are kept
+side by side, because the gap between them is the honest description of where a
+governance programme actually is.
+
+**§8's inline YAML was the concrete instance of the problem.** A copy of a
+config inside a document goes stale silently and a reader trusts it — exactly
+what the caller contract warns about, one layer up. It was three releases out of
+date. The copy is gone; §5.3's matrix stays, and a test asserts it equals the
+shipped registry's band→controls mapping.
+
+One false positive is worth recording, because the fix is the interesting part.
+The ordinal-claim test fired on the prohibition's own quoted counter-examples.
+The answer was not to weaken the pattern but to fence that passage — and to
+**count the fences**, asserting there is exactly one. An exemption that can be
+added silently is an exemption that gets added.
 
 ---
 
