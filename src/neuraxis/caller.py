@@ -82,15 +82,18 @@ from __future__ import annotations
 
 import json
 import os
+import socketserver
 import subprocess
 import sys
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .conformance import ConformanceError
-from .model import REQUEST_REQUIRED_FIELDS, AuthorityRequest
+from .model import REQUEST_REQUIRED_FIELDS, AuthorityRequest, strict_principal
 
 __all__ = [
     "BLOCKING_EVENTS",
@@ -156,6 +159,17 @@ def _verdict(decision: str) -> str:
     return json.dumps(payload, sort_keys=True)
 
 
+#: How a scenario configures the gate the caller will find.
+_GATE_SERVED = "served"
+_GATE_MISSING = "missing"
+_GATE_UNSET = "unset"
+
+#: Fields naming a principal. Equality here CERTIFIES the caller, so it takes
+#: the strict fold -- the one this package reserves for comparisons where a
+#: collision authorises.
+_PRINCIPAL_FIELDS = frozenset({"identity", "verifier", "performer", "role"})
+
+
 @dataclass(frozen=True)
 class _Scenario:
     name: str
@@ -164,9 +178,50 @@ class _Scenario:
     exit_code: int
     stdout: str = ""
     stderr: str = ""
-    #: `missing` points NEURAXIS_BIN at a path that does not exist, so no
-    #: invocation is recorded and the `called` rule does not apply to it.
-    runs_gate: bool = True
+    gate: str = _GATE_SERVED
+    #: Replaces the reference request for this scenario, when it needs a
+    #: different one.
+    request_override: Mapping[str, Any] | None = None
+    #: When set, the scripted gate ALLOWS a request that has had these fields
+    #: removed and DENIES the faithful one. A fixed-answer gate can never
+    #: observe doctoring, because nothing the caller does to the request
+    #: changes what comes back.
+    allow_if_missing: tuple[str, ...] = ()
+
+    @property
+    def offers_a_gate(self) -> bool:
+        return self.gate == _GATE_SERVED
+
+    def request(self) -> Mapping[str, Any]:
+        return self.request_override or REFERENCE_REQUEST
+
+    def responder(self):
+        if not self.allow_if_missing:
+            def fixed(_request: Mapping[str, Any]) -> dict[str, Any]:
+                return {
+                    "exit_code": self.exit_code,
+                    "stdout": self.stdout,
+                    "stderr": self.stderr,
+                }
+            return fixed
+
+        wanted = self.allow_if_missing
+
+        def trap(request: Mapping[str, Any]) -> dict[str, Any]:
+            try:
+                sent = json.loads(str(request.get("stdin", "")) or "{}")
+            except ValueError:
+                sent = {}
+            doctored = isinstance(sent, Mapping) and any(f not in sent for f in wanted)
+            if doctored:
+                return {
+                    "exit_code": 0,
+                    "stdout": json.dumps(_ALLOW_VERDICT, sort_keys=True),
+                    "stderr": "",
+                }
+            return {"exit_code": 10, "stdout": _verdict("DENY"), "stderr": ""}
+
+        return trap
 
 
 _SCENARIOS: tuple[_Scenario, ...] = (
@@ -218,27 +273,116 @@ _SCENARIOS: tuple[_Scenario, ...] = (
     _Scenario(
         "missing",
         "no gate reachable is not a gate that consented",
-        REFUSE, 0, "", "", runs_gate=False,
+        REFUSE, 0, "", "", gate=_GATE_MISSING,
+    ),
+    _Scenario(
+        "unconfigured",
+        "an unconfigured gate is not an absent objection - the production default "
+        "is that nothing has been set yet, and that branch has to refuse too",
+        REFUSE, 0, "", "", gate=_GATE_UNSET,
+    ),
+    _Scenario(
+        "fidelity_trap",
+        "doctoring the request is refusing to take the answer - the gate allows only "
+        "a request with `verifier` removed, so a caller that retries without it issues",
+        REFUSE, 10, "", "", allow_if_missing=("verifier",),
     ),
 )
 
 #: Scenario names, in the order the suite drives them.
 CALLER_SCENARIOS: tuple[str, ...] = tuple(s.name for s in _SCENARIOS)
 
-_STUB = '''\
-import json, os, pathlib, sys
-here = pathlib.Path(__file__).parent
-spec = json.loads((here / "spec.json").read_text(encoding="utf-8"))
+#: The scripted gate. It carries no answers and writes no evidence: it relays
+#: the request to the harness and relays the harness's reply back.
+#:
+#: The previous design wrote the scenario's answer and the invocation log into
+#: a directory whose path the harness handed to the caller in
+#: NEURAXIS_BIN_ARGS. A caller could therefore read the answer without asking,
+#: forge the log, and score twelve out of twelve having never executed a gate.
+#: Everything the suite treated as evidence was writable by the thing being
+#: measured. An adversarial review built exactly that caller.
+#:
+#: The caller can still read this source and find the port, and that is fine:
+#: to learn the verdict it must now *make the request*, and the harness -- not
+#: a file within the caller's reach -- is what records that it did.
+_STUB = r"""
+import json, socket, sys
+port = int(sys.argv[1])
 try:
     payload = sys.stdin.read()
 except Exception:
     payload = ""
-with (here / "invocations.jsonl").open("a", encoding="utf-8") as fh:
-    fh.write(json.dumps({"argv": sys.argv[1:], "stdin": payload}) + "\\n")
-sys.stdout.write(spec["stdout"])
-sys.stderr.write(spec["stderr"])
-sys.exit(spec["exit_code"])
-'''
+sock = socket.create_connection(("127.0.0.1", port), timeout=30)
+try:
+    sock.sendall(json.dumps({"stdin": payload, "argv": sys.argv[2:]}).encode("utf-8"))
+    sock.shutdown(socket.SHUT_WR)
+    buf = b""
+    while True:
+        chunk = sock.recv(65536)
+        if not chunk:
+            break
+        buf += chunk
+finally:
+    sock.close()
+reply = json.loads(buf.decode("utf-8"))
+sys.stdout.write(reply["stdout"])
+sys.stderr.write(reply["stderr"])
+sys.exit(reply["exit_code"])
+"""
+
+
+class _GateHandler(socketserver.StreamRequestHandler):
+    timeout = 30
+
+    def handle(self) -> None:
+        raw = self.rfile.read()
+        try:
+            request = json.loads(raw.decode("utf-8") or "{}")
+        except ValueError:
+            request = {"stdin": "", "argv": [], "unparseable": True}
+        if not isinstance(request, Mapping):
+            request = {"stdin": "", "argv": [], "unparseable": True}
+        server = self.server
+        server.record(request)
+        self.wfile.write(json.dumps(server.respond(request)).encode("utf-8"))
+
+
+class _GateServer(socketserver.ThreadingTCPServer):
+    """The scripted gate, running inside the harness.
+
+    Two properties the file-based stub could not have:
+
+    **The invocation log is server-side.** A caller cannot append to it, cannot
+    truncate it, and cannot learn a verdict without producing a record.
+
+    **The reply can depend on the request.** That is what makes a caller's
+    *doctoring* observable. The `fidelity_trap` scenario allows a request that
+    has had `verifier` removed and denies the faithful one, so a caller that
+    retries without the field visibly issues where it must refuse -- a property
+    no fixed-answer stub can test, because nothing a caller does to the request
+    changes what comes back.
+    """
+
+    allow_reuse_address = True
+    daemon_threads = True
+
+    def __init__(self, respond) -> None:
+        super().__init__(("127.0.0.1", 0), _GateHandler)
+        self.respond = respond
+        self.records: list[dict[str, Any]] = []
+        self._lock = threading.Lock()
+
+    def record(self, request: Mapping[str, Any]) -> None:
+        with self._lock:
+            self.records.append(dict(request))
+
+    def seen(self) -> tuple[Mapping[str, Any], ...]:
+        with self._lock:
+            return tuple(self.records)
+
+    @property
+    def port(self) -> int:
+        return int(self.server_address[1])
 
 
 @dataclass(frozen=True)
@@ -302,101 +446,114 @@ class _Run:
 
 
 def _drive(argv: list[str], scenario: _Scenario, timeout: float) -> _Run:
-    with tempfile.TemporaryDirectory(prefix="neuraxis-caller-") as tmp:
-        root = Path(tmp)
-        stub = root / "gate_stub.py"
-        stub.write_text(_STUB, encoding="utf-8")
-        (root / "spec.json").write_text(
-            json.dumps(
-                {
-                    "exit_code": scenario.exit_code,
-                    "stdout": scenario.stdout,
-                    "stderr": scenario.stderr,
-                },
-                sort_keys=True,
-            ),
-            encoding="utf-8",
-        )
+    server = _GateServer(scenario.responder())
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with tempfile.TemporaryDirectory(prefix="neuraxis-caller-") as tmp:
+            stub = Path(tmp) / "gate_stub.py"
+            stub.write_text(_STUB, encoding="utf-8")
 
-        env = dict(os.environ)
-        if scenario.runs_gate:
-            env["NEURAXIS_BIN"] = sys.executable
-            env["NEURAXIS_BIN_ARGS"] = json.dumps([str(stub)])
-        else:
-            env["NEURAXIS_BIN"] = str(root / "no-such-gate")
-            env["NEURAXIS_BIN_ARGS"] = "[]"
-        # Informational only. A caller that branches on it is testing its way
-        # past the suite rather than through it, which no harness can prevent
-        # and which is worth naming rather than pretending otherwise.
-        env["NEURAXIS_CONFORMANCE_SCENARIO"] = scenario.name
+            env = dict(os.environ)
+            if scenario.gate == _GATE_UNSET:
+                # The production default: nothing configured. Never exercised
+                # before, and it is the one branch every caller takes before
+                # somebody sets the variable.
+                env.pop("NEURAXIS_BIN", None)
+                env.pop("NEURAXIS_BIN_ARGS", None)
+            elif scenario.gate == _GATE_MISSING:
+                env["NEURAXIS_BIN"] = str(Path(tmp) / "no-such-gate")
+                env["NEURAXIS_BIN_ARGS"] = "[]"
+            else:
+                env["NEURAXIS_BIN"] = sys.executable
+                env["NEURAXIS_BIN_ARGS"] = json.dumps([str(stub), str(server.port)])
+            # Informational only. A caller that branches on it is testing its
+            # way past the suite rather than through it. No black-box harness
+            # can prevent that, and the honest thing is to say so -- but note
+            # that this is now the ONLY harness state the caller is handed. It
+            # is no longer given the answer or the evidence file.
+            env["NEURAXIS_CONFORMANCE_SCENARIO"] = scenario.name
 
-        try:
-            completed = subprocess.run(
-                argv,
-                input=json.dumps(REFERENCE_REQUEST, sort_keys=True),
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
-                env=env,
+            try:
+                completed = subprocess.run(
+                    argv,
+                    input=json.dumps(scenario.request(), sort_keys=True),
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                    env=env,
+                )
+            except FileNotFoundError as exc:
+                raise ConformanceError(f"caller not found: {exc}") from None
+            except subprocess.TimeoutExpired:
+                return _Run(None, NO_ANSWER, server.seen())
+            except OSError as exc:
+                raise ConformanceError(f"could not run the caller: {exc}") from None
+
+            observed = PROCEED if completed.returncode == 0 else REFUSE
+            return _Run(
+                completed.returncode, observed, server.seen(), completed.stderr[:500]
             )
-        except FileNotFoundError as exc:
-            raise ConformanceError(f"caller not found: {exc}") from None
-        except subprocess.TimeoutExpired:
-            return _Run(None, NO_ANSWER, _read_invocations(root))
-        except OSError as exc:
-            raise ConformanceError(f"could not run the caller: {exc}") from None
-
-        observed = PROCEED if completed.returncode == 0 else REFUSE
-        return _Run(
-            completed.returncode, observed, _read_invocations(root), completed.stderr[:500]
-        )
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
-def _read_invocations(root: Path) -> tuple[Mapping[str, Any], ...]:
-    path = root / "invocations.jsonl"
-    if not path.exists():
-        return ()
-    records: list[Mapping[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            record = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(record, Mapping):
-            records.append(record)
-    return tuple(records)
-
-
-def _fidelity_faults(invocations: Sequence[Mapping[str, Any]]) -> list[str]:
-    """What the gate was actually asked, compared with what the caller was handed."""
-    if not invocations:
-        return ["the caller never invoked the gate, so there is nothing to compare"]
-
-    raw = str(invocations[-1].get("stdin", "")).strip()
+def _sent(record: Mapping[str, Any]) -> Mapping[str, Any] | str:
+    """What one invocation put on the gate's stdin, parsed, or why it could not be."""
+    raw = str(record.get("stdin", "")).strip()
     if not raw:
-        return [
-            "the caller invoked the gate with nothing on stdin; the request never "
-            "reached it"
-        ]
+        return "invoked the gate with nothing on stdin; the request never reached it"
     try:
         sent = json.loads(raw)
     except ValueError as exc:
-        return [f"what the caller sent the gate is not JSON: {exc}"]
+        return f"what the caller sent the gate is not JSON: {exc}"
     if not isinstance(sent, Mapping):
-        return ["what the caller sent the gate is not a JSON object"]
+        return "what the caller sent the gate is not a JSON object"
+    return sent
 
+
+def _compare(sent: Mapping[str, Any], expected: Mapping[str, Any]) -> list[str]:
+    """Every difference between what the gate was asked and what was handed over.
+
+    Three things the first cut of this got wrong, each found by driving a real
+    exploit through it:
+
+    **Added fields count.** The original walked the expected field list and
+    asked "was anything lost". The dangerous direction is the other one: a
+    caller that appends `ratification_ref` clears the non-delegable floor and
+    the GV-07 requirement, and every field it was handed did indeed arrive
+    unchanged. Key sets are compared, not just values.
+
+    **Principals compare strictly.** Equality here AUTHORISES -- it is what
+    certifies the caller as faithful -- so by this package's own rule it takes
+    `strict_principal`, not a casefold that would accept `AGENT-MOTOR` as the
+    principal the gate will actually reason about.
+
+    **Scope compares byte-for-byte after stripping.** It is what lands in the
+    evidence record.
+    """
     faults: list[str] = []
     try:
-        AuthorityRequest.from_dict(sent)
+        AuthorityRequest.from_dict(dict(sent))
     except (ValueError, TypeError) as exc:
         faults.append(f"the gate would have refused the request as malformed: {exc}")
 
-    for name in _FIDELITY_FIELDS:
-        expected = REFERENCE_REQUEST[name]
+    added = sorted(set(sent) - set(expected) - {"requested_at"})
+    if added:
+        faults.append(
+            f"added {', '.join(repr(a) for a in added)} on the way to the gate"
+            + (
+                "; a ratification reference the caller invented satisfies the "
+                "non-delegable floor the gate exists to hold"
+                if "ratification_ref" in added
+                else ""
+            )
+        )
+
+    for name in expected:
+        want = expected[name]
         if name not in sent:
             faults.append(
                 f"{name!r} was dropped on the way to the gate"
@@ -408,12 +565,45 @@ def _fidelity_faults(invocations: Sequence[Mapping[str, Any]]) -> list[str]:
                 )
             )
             continue
-        actual = sent[name]
-        if isinstance(expected, str) and isinstance(actual, str):
-            if actual.strip().casefold() != expected.strip().casefold():
-                faults.append(f"{name!r} reached the gate as {actual!r}, not {expected!r}")
-        elif actual != expected:
-            faults.append(f"{name!r} reached the gate as {actual!r}, not {expected!r}")
+        got = sent[name]
+        if isinstance(want, str) and isinstance(got, str):
+            same = (
+                strict_principal(got) == strict_principal(want)
+                if name in _PRINCIPAL_FIELDS
+                else got.strip() == want.strip()
+            )
+            if not same:
+                faults.append(f"{name!r} reached the gate as {got!r}, not {want!r}")
+        elif type(got) is not type(want) or got != want:
+            # `1 == True` in Python, so a type check comes first: a caller that
+            # sends 1 for a boolean has not sent the boolean the gate demands.
+            faults.append(f"{name!r} reached the gate as {got!r}, not {want!r}")
+    return faults
+
+
+def _fidelity_faults(runs: Mapping[str, _Run], scenarios: Sequence[_Scenario]) -> list[str]:
+    """Every invocation, in every scenario, against the request that scenario handed over.
+
+    The first cut compared only the LAST invocation of the `allow` scenario.
+    Two exploits walked through the gap: decide on a doctored first call and
+    make a faithful decoy second one, or -- the caller a real team writes under
+    schedule pressure -- ask faithfully, get DENY, then retry without
+    `verifier` and honour that.
+    """
+    faults: list[str] = []
+    asked_anywhere = False
+    for scenario in scenarios:
+        run = runs[scenario.name]
+        expected = scenario.request()
+        for index, record in enumerate(run.invocations, start=1):
+            asked_anywhere = True
+            sent = _sent(record)
+            if isinstance(sent, str):
+                faults.append(f"{scenario.name} call {index}: {sent}")
+                continue
+            faults += [f"{scenario.name} call {index}: {f}" for f in _compare(sent, expected)]
+    if not asked_anywhere:
+        return ["the caller never invoked the gate, so there is nothing to compare"]
     return faults
 
 
@@ -440,11 +630,20 @@ def check_caller(
 
     checks: list[CallerCheck] = []
     warnings: list[str] = []
-    runs: dict[str, _Run] = {}
+
+    # Scenarios are independent -- a separate scripted gate, a separate
+    # subprocess, no shared state -- and each one costs two interpreter starts.
+    # Run them concurrently; results are keyed by name, so the report's order
+    # still comes from `_SCENARIOS`.
+    with ThreadPoolExecutor(max_workers=min(len(_SCENARIOS), 8)) as pool:
+        futures = {
+            scenario.name: pool.submit(_drive, argv, scenario, timeout)
+            for scenario in _SCENARIOS
+        }
+        runs: dict[str, _Run] = {name: future.result() for name, future in futures.items()}
 
     for scenario in _SCENARIOS:
-        run = _drive(argv, scenario, timeout)
-        runs[scenario.name] = run
+        run = runs[scenario.name]
         if run.observed == NO_ANSWER:
             detail = (
                 f"the caller did not answer within {timeout:g}s. A lease issuer that "
@@ -480,7 +679,7 @@ def check_caller(
     # --- called: every issuance asks. A cached ALLOW is invisible from the
     # exit code, and it is precisely the bypass D-03 forbids.
     silent_scenarios = [
-        s.name for s in _SCENARIOS if s.runs_gate and not runs[s.name].invocations
+        s.name for s in _SCENARIOS if s.offers_a_gate and not runs[s.name].invocations
     ]
     checks.append(
         CallerCheck(
@@ -494,24 +693,29 @@ def check_caller(
                 else "the caller issued or refused without invoking the gate in: "
                 + ", ".join(silent_scenarios)
             ),
-            invocations=sum(len(runs[s.name].invocations) for s in _SCENARIOS if s.runs_gate),
+            invocations=sum(
+                len(runs[s.name].invocations) for s in _SCENARIOS if s.offers_a_gate
+            ),
         )
     )
 
     # --- fidelity: the gate answers the question it was asked.
-    faults = _fidelity_faults(runs["allow"].invocations)
+    faults = _fidelity_faults(runs, _SCENARIOS)
     checks.append(
         CallerCheck(
             scenario="fidelity",
-            rule="the gate sees the request the caller was asked to authorise - a field "
-            "dropped in transit is a check silently switched off",
+            rule="the gate sees the request the caller was asked to authorise, on every "
+            "call in every scenario - a field dropped, altered or added in transit is a "
+            "check silently switched off",
             ok=not faults,
             detail="; ".join(faults) or "every field reached the gate unchanged",
-            invocations=len(runs["allow"].invocations),
+            invocations=sum(len(r.invocations) for r in runs.values()),
         )
     )
 
-    extra = [s.name for s in _SCENARIOS if s.runs_gate and len(runs[s.name].invocations) > 1]
+    extra = [
+        s.name for s in _SCENARIOS if s.offers_a_gate and len(runs[s.name].invocations) > 1
+    ]
     if extra:
         warnings.append(
             "the caller invoked the gate more than once in: "

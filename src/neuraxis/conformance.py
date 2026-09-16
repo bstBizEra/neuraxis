@@ -27,9 +27,13 @@ The four scenarios, and what each one is for:
 | scenario | the source should | rule |
 |---|---|---|
 | `live` | run normally | the output must parse, and carry a real evidence reference |
+| `positive` | run against a condition it should accept | it must be *able* to pass |
+| `negative` | run against a condition it should reject | it must be *able* to fail |
 | `broken` | run with something it depends on unavailable | fail closed: never PASS |
-| `negative` | run against a condition it should reject | positive control: it must be *able* to fail |
 | `powerless` | run as an identity with no authority | vacuity: a probe that passes for a powerless identity is not a probe |
+
+A source that can only ever say one of the two words has not demonstrated a
+check. `positive` and `negative` are the two halves, and both are required.
 
 `powerless` is required only for sources whose control is declared `kind: probe`
 in the registry. **The kind comes from the kernel, not from the source.** A
@@ -65,7 +69,13 @@ __all__ = [
 ]
 
 #: Scenario names, in the order the suite drives them.
-SCENARIOS = ("live", "broken", "negative", "powerless")
+#:
+#: `positive` was added after an adversarial review: a source hardcoded to
+#: `{"result": false}` satisfied every other rule and conformed. Rule 2 was
+#: labelled "positive control" and only ever proved a source could emit FAIL.
+#: The two halves are now separate scenarios, and together they prove the check
+#: is live in both directions.
+SCENARIOS = ("live", "positive", "negative", "broken", "powerless")
 
 #: Evidence references that are not references. A source emitting one of these
 #: has satisfied the letter of rule 4 and none of it.
@@ -86,7 +96,7 @@ def scenarios_for(kind: str) -> tuple[str, ...]:
     treated as `probe`: an unrecognised kind must not be a way out of a check.
     """
     if str(kind).strip().lower() == "audit":
-        return ("live", "broken", "negative")
+        return ("live", "positive", "negative", "broken")
     return SCENARIOS
 
 
@@ -293,6 +303,49 @@ def check_source(
         )
     )
 
+    # --- positive: rule 2a. A source that cannot pass has not demonstrated a
+    # check either. Hardcoding `{"result": false}` is safe, useless, and until
+    # this scenario existed it conformed.
+    positive = runs["positive"]
+    results.append(
+        ScenarioResult(
+            scenario="positive",
+            rule="rule 2a - the check can pass: a source that only ever says FAIL has "
+            "demonstrated nothing",
+            ok=positive.result is True,
+            detail=(
+                "reports PASS against a condition it should accept"
+                if positive.result is True
+                else "did not report PASS against a condition it should accept; a source "
+                "hardcoded to FAIL satisfies every other rule and checks nothing"
+            ),
+            result=positive.result,
+            evidence_ref=positive.evidence_ref,
+            exit_code=positive.exit_code,
+            raw=positive.stdout[:500],
+        )
+    )
+
+    # --- negative: rule 2b. A source that cannot fail is not a check.
+    negative = runs["negative"]
+    results.append(
+        ScenarioResult(
+            scenario="negative",
+            rule="rule 2b - the check can fail: prove it is live before scoring a pass",
+            ok=negative.result is False,
+            detail=(
+                "reports FAIL against a condition it should reject"
+                if negative.result is False
+                else "did not report FAIL against a condition it should reject; "
+                "a source that cannot fail is not a check"
+            ),
+            result=negative.result,
+            evidence_ref=negative.evidence_ref,
+            exit_code=negative.exit_code,
+            raw=negative.stdout[:500],
+        )
+    )
+
     # --- broken: rule 1. Anything other than PASS is conforming; a crash
     # conforms but is worth saying out loud, because the caller has to be the
     # one converting it to FAIL.
@@ -321,41 +374,30 @@ def check_source(
         )
     )
 
-    # --- negative: rule 2. A source that cannot fail is not a check.
-    negative = runs["negative"]
-    results.append(
-        ScenarioResult(
-            scenario="negative",
-            rule="rule 2 - positive control: prove the check is live before scoring a pass",
-            ok=negative.result is False,
-            detail=(
-                "reports FAIL against a condition it should reject"
-                if negative.result is False
-                else "did not report FAIL against a condition it should reject; "
-                "a source that cannot fail is not a check"
-            ),
-            result=negative.result,
-            evidence_ref=negative.evidence_ref,
-            exit_code=negative.exit_code,
-            raw=negative.stdout[:500],
-        )
-    )
-
     # --- powerless: rule 3, probes only.
     if "powerless" in required:
         powerless = runs["powerless"]
-        vacuous = live.result is True and powerless.result is True
+        # Tightened after an adversarial review. The rule used to be
+        # `not (live.result and powerless.result)`, so a source that CRASHED on
+        # this scenario -- or hung, or emitted a non-boolean -- produced
+        # `result is None`, satisfied it, and was reported as "distinguishes a
+        # powerless identity from a powerful one". It distinguished nothing. A
+        # scenario the source declines to answer is not a demonstration, and
+        # saying otherwise in the field a reviewer reads is worse than failing.
         results.append(
             ScenarioResult(
                 scenario="powerless",
                 rule="rule 3 - no vacuous probe: the same answer for a powerful and a "
                 "powerless identity is not a check",
-                ok=not vacuous,
+                ok=powerless.result is False,
                 detail=(
-                    "passes for an identity with no authority, exactly as it does for one "
-                    "with authority; the probe is not probing anything"
-                    if vacuous
-                    else "distinguishes a powerless identity from a powerful one"
+                    "reports FAIL for an identity with no authority"
+                    if powerless.result is False
+                    else "passes for an identity with no authority, exactly as it does "
+                    "for one with authority; the probe is not probing anything"
+                    if powerless.result is True
+                    else "gave no usable answer for a powerless identity, so it has "
+                    "demonstrated no distinction at all"
                 ),
                 result=powerless.result,
                 evidence_ref=powerless.evidence_ref,

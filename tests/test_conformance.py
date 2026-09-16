@@ -60,13 +60,13 @@ def test_a_probe_must_answer_the_vacuity_scenario():
 
 def test_an_audit_is_not_asked_the_vacuity_scenario():
     """An audit of a log legitimately answers the same whoever asks."""
-    assert scenarios_for("audit") == ("live", "broken", "negative")
+    assert scenarios_for("audit") == ("live", "positive", "negative", "broken")
 
 
 @pytest.mark.parametrize("kind", ["", "PROBE ", "drill", "nonsense", "Audit "])
 def test_an_unrecognised_kind_is_treated_as_a_probe(kind):
     """An unknown kind must not be a way out of a check."""
-    expected = ("live", "broken", "negative") if kind.strip().lower() == "audit" else SCENARIOS
+    expected = ("live", "positive", "negative", "broken") if kind.strip().lower() == "audit" else SCENARIOS
     assert scenarios_for(kind) == expected
 
 
@@ -77,7 +77,7 @@ def test_the_reference_source_conforms():
     """The positive control for the suite itself."""
     report = check_source(_source("conforming_source"), "GV-01", kind="probe")
     assert report.conforms, [r.detail for r in report.failures]
-    assert len(report.results) == 4
+    assert len(report.results) == 5
 
 
 def test_the_vacuous_source_is_caught_on_three_rules():
