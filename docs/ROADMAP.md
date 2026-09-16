@@ -369,3 +369,38 @@ keys.
 `envelope_signers: []`, and `neuraxis validate` warns about it. Naming a
 principal there today would be a list of strings pretending to be an allowlist,
 since no principal registry exists until T1. The warning is the honest state.
+
+---
+
+## Version control - the process layer catches up (2026-09-16)
+
+Nine releases had gone to `main` by direct push. That is this framework's own
+rule broken by the thing that defines it: *automation may propose; it may not
+merge*, and the performer was merging its own work with nothing independent
+between proposal and effect. The process layer was running at `V = 0` while the
+package spent four releases making `V = 0` impossible for everyone else.
+
+Fixed, mechanically rather than by convention:
+
+- **Ruleset `main: automation may propose, it may not merge`**, active, no
+  bypass actors. Pull request required, **0 required approvals** (a sole owner
+  cannot approve their own PR, so 1 would deadlock every merge - D-06's shape
+  again), all seven status checks required, branch must be current before
+  merge, no force-push, no deletion. Verified by execution: a direct push to
+  `main` is now refused with `GH013`.
+- **Tags** `v0.3.1` ... `v0.9.0`, retroactive. `v0.1`-`v0.3` landed inside the
+  initial commit and cannot get one; `v0.3.1` is the first independently
+  referenceable version.
+- **`release.yml`** on tag push: checks out the tag, runs the suite and the
+  gate self-check *against that commit*, builds sdist and wheel, and records
+  the SHA-256 of the kernel registry as a release asset.
+
+The last one is the substantive part. `## What running looks like` above
+prescribes a weekly "drift check on the registry against its ratified version",
+and that sentence was meaningless while no version was ratified. Now a release
+carries `REGISTRY-DIGEST.txt`, and the weekly check is one `sha256sum`.
+
+Full runbook in [`docs/RELEASE.md`](RELEASE.md), including what the ruleset
+does **not** claim: one person opening and merging their own pull request is
+weaker than two-person review, and nothing here authenticates an author. Same
+limit as everywhere else - it closes at T1.
