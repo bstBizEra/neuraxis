@@ -1,0 +1,244 @@
+# ILR-001-DR - the decision register as versioned config (W8).
+#
+# NOT KERNEL, and carefully so. Nothing here bounds anything. The enforcement
+# clauses quoted in the register document are DESCRIPTIVE; the authoritative
+# ones are constants in code, because a bound that exists to constrain config
+# cannot live in config (ADR 0006). What this file carries is the record of
+# each ruling, the SYMBOL that enforces it, and the condition that would
+# reverse it.
+#
+# Two invariants make it worth having rather than being a YAML transcript:
+#
+#   1. Every ruling names the code that enforces it, and that symbol must
+#      import. Rename or delete the enforcement point and this file fails to
+#      load - which is the only way a ruling and its implementation stay
+#      attached to each other.
+#
+#   2. Every reversal trigger is either DETECTABLE or OWNED. A trigger with a
+#      detector can fire on its own; a trigger without one must name a person
+#      and a review cadence. A trigger that is neither is "remembered", and a
+#      remembered trigger is the thing W8 exists to abolish.
+
+version: 1
+register: ILR-001-DR
+revision: B
+source: ILR-001-DR Rev A, with the D-07 addendum folded in
+amends: ILR-001 v0.1, at sections 4, 6 and 7
+
+# Weights from the register's own scoring model (section 1.1). Recorded so the
+# rankings can be re-run rather than re-argued.
+criteria:
+  C1: { name: Irreversibility / blast radius, weight: 0.35 }
+  C2: { name: Time-to-enforceable,            weight: 0.25 }
+  C3: { name: External credibility,           weight: 0.20 }
+  C4: { name: Engineering cost / throughput,  weight: 0.20 }
+
+rulings:
+  D-01:
+    title: IL-13 Self-Improving placement
+    question: >-
+      The draft relocates all of IL-13 to Band G. Is the wholesale move right,
+      or does it push parameter tuning outside the register?
+    ruling: >-
+      Split. IL-13a Self-Tuning is admissible from Band C inside a declared,
+      signed, finite envelope; IL-13b Self-Modifying stays in Band G.
+    amends_draft: true
+    score: 4.55
+    enforcement:
+      - symbol: neuraxis.envelope:Envelope
+        note: The envelope itself - active interval, bounded principal, finite limits.
+      - symbol: neuraxis.gate:GovernanceGate._check_envelope
+        note: The deny path. Every denial is prefixed OUT_OF_ENVELOPE.
+      - symbol: neuraxis.registry:_assert_envelope_floor
+        note: >-
+          authority.envelope_required must agree with envelope_bounded or the
+          registry does not load. Without it, deleting one YAML token turns
+          IL-13a into unbounded self-tuning with no error and no failing test.
+      - capability: IL-13a
+      - capability: IL-13b
+    reversal:
+      trigger: Two or more out-of-envelope denials against one envelope in 90 days
+      fallback: Option B - all of IL-13 to Band G, accepting that tuning moves out of view
+      detector:
+        kind: command
+        run: ["neuraxis", "envelopes", "--audit"]
+        armed_on_exit: 10
+      divergence: >-
+        The register's trigger says "overridden by waiver". That half cannot be
+        implemented faithfully - Neuraxis waives controls, not individual
+        denials, and no per-request override path exists, deliberately, since
+        one would be the loophole D-01 warns the split could become. What is
+        counted is repeated denials against the same envelope, which is the
+        same signal without inventing the override.
+
+  D-02:
+    title: Banded graph versus ladder
+    question: >-
+      Is the IL index a ladder, a flat registry, or a banded dependency graph?
+    ruling: >-
+      Banded DAG canonical; bands are the only unit of attestation; ordinal
+      attainment claims prohibited in external use.
+    amends_draft: false
+    score: 4.60
+    enforcement:
+      - symbol: neuraxis.registry:_assert_acyclic
+      - symbol: neuraxis.registry:_assert_monotonic
+        note: Each band's control set is a superset of every band below it.
+      - symbol: neuraxis.registry:_assert_single_root
+      - symbol: neuraxis.resolver:BandResolver
+        note: Bands are the only unit the gate resolves.
+    reversal:
+      trigger: An external party cites an ordinal IL level back to BST in writing
+      fallback: Withdraw the flat capability index entirely
+      # No detector, and there should not be one. This is a communications
+      # control: the evidence arrives in someone's inbox, not in the sink.
+      owner: OP-Vily
+      review: per external issue
+      note: >-
+        The document half IS checked - tests/test_ilr001.py refuses an ordinal
+        claim in ILR-001 itself, and counts the one fenced exemption. What no
+        detector can see is what a third party writes.
+
+  D-03:
+    title: Governance Loop shape
+    question: Synchronous on what?
+    ruling: >-
+      Synchronous and blocking at authority-grant; asynchronous and revoke-only
+      within an already-granted envelope.
+    amends_draft: true
+    score: 4.55
+    enforcement:
+      - symbol: neuraxis.caller:BLOCKING_EVENTS
+        note: >-
+          The five grant-time events, as a constant rather than a setting. A
+          list that can be edited in config is a list that can be shortened
+          under schedule pressure.
+      - symbol: neuraxis.gate:GovernanceGate
+        note: The grant-time half. The async revoke-only observer is L0's and does not exist.
+    reversal:
+      trigger: >-
+        A bypass path is created around the synchronous gate, or median lease
+        TTL rises across two consecutive reviews
+      fallback: Tighten to Option B - synchronous on every decision - and accept the throughput cost
+      owner: L0
+      review: per two releases
+      note: >-
+        Rising TTL is a bypass in disguise: the team routing around latency by
+        asking for longer grants. Detectable once a lease log exists; the
+        provider reads it, but nothing yet produces one.
+
+  D-04:
+    title: The effective-intelligence formula
+    question: Veto, score, or retire?
+    ruling: >-
+      Retire to non-normative. Section 7 becomes a boolean precondition set;
+      the product form is retained in the rationale only.
+    amends_draft: true
+    score: 4.80
+    enforcement:
+      - symbol: neuraxis.gate:GovernanceGate._check_verifier_independence
+        note: >-
+          P5 - the precondition the formula's V term was standing in for. Two
+          of three clauses live.
+      - symbol: neuraxis.scorecard:measure
+        note: >-
+          The product form, kept and reachable but never a gate input. It
+          reports; it does not license.
+    reversal:
+      trigger: A client or regulator requires a quantified maturity index
+      fallback: Build a purpose-built index for that requirement - never the product form
+      owner: OP-Vily
+      review: per external engagement
+
+  D-05:
+    title: Capability-Authority Gate shape
+    question: >-
+      Monotonic cumulative staircase, per-band set, or per-capability mapping -
+      and what is the exception path?
+    ruling: >-
+      Monotonic cumulative staircase, with waivers that carry a named
+      accountable, a compensating control and a hard expiry.
+    amends_draft: false
+    score: 4.45
+    enforcement:
+      - symbol: neuraxis.registry:_assert_monotonic
+      - symbol: neuraxis.waiver:WaiverRegister
+        note: Renewal depth, waiver tiling and renewal stars are refused at load, not reported after.
+      - symbol: neuraxis.waiver:MAX_TTL_CEILING
+        note: A constant. A registry may tighten it and may never loosen it.
+    reversal:
+      trigger: Any waiver renewed twice, or more than two active at once
+      fallback: Re-cut the matrix against real capacity - do not keep waiving it
+      detector:
+        kind: command
+        run: ["neuraxis", "waivers"]
+        armed_on_exit: 10
+      note: >-
+        Half of this trigger cannot fire, by design: renewal depth above one is
+        refused at load rather than detected afterwards. The detector catches
+        the other half - every waiver is void above the active cap, and the
+        denial names the breach.
+
+  D-06:
+    title: KBS-001 / T1 as the Band C blocker
+    question: Standalone clause, soft block, or derived from the matrix?
+    ruling: >-
+      Derive the block from the matrix. GV-01, GV-02, GV-03 and GV-08 are
+      non-compensable - no waiver path, no named-accountable path, no expiry.
+    amends_draft: false
+    score: 4.60
+    enforcement:
+      - symbol: neuraxis.waiver:NON_COMPENSABLE_FLOOR
+        note: >-
+          A frozenset in code. The first implementation put it in the registry
+          YAML and four line deletions removed it, with no error and no failing
+          test (ADR 0006).
+      - symbol: neuraxis.waiver:WaiverPolicy
+        note: Unions the floor and clamps every ceiling with min(), so config tightens and never loosens.
+    reversal:
+      trigger: KBS-001's scope changes so that T1 no longer implements all four controls
+      fallback: Re-derive from the matrix. There is no waiver path
+      detector:
+        kind: by_construction
+        why: >-
+          The block derives from the matrix - Band C requires GV-01/02/03/08,
+          T1 implements them, therefore Band C is blocked until T1 lands. There
+          is no separate clause that could drift out of sync, so there is
+          nothing for a detector to watch.
+
+  D-07:
+    title: How the enforcement layer reaches the gate
+    question: >-
+      In-process import, long-running service, generated policy file, or
+      subprocess invocation of the CLI?
+    ruling: >-
+      L0 invokes `neuraxis gate` at each of D-03's five blocking events and
+      refuses the grant on any non-zero exit - together with a caller
+      conformance suite, never alone.
+    amends_draft: false
+    score: 4.25
+    folded_from: D-07 addendum, 2026-09-16
+    enforcement:
+      - symbol: neuraxis.caller:check_caller
+        note: >-
+          Without the suite this ruling scores worst on blast radius rather
+          than best, and inverts. The suite is part of the ruling.
+      - symbol: neuraxis.caller:BLOCKING_EVENTS
+      - symbol: neuraxis.model:Decision
+        note: >-
+          Published through `neuraxis contract` so no caller holds a copy that
+          can go stale.
+    reversal:
+      trigger: >-
+        A grant path found in production that did not call the gate; a verdict
+        cached or reused across grants; or caller-conform absent from the
+        caller's CI for two consecutive releases
+      fallback: >-
+        A long-running service with a mandatory fail-closed client, accepting
+        the availability cost this ruling was chosen to avoid
+      owner: L0
+      review: per two releases
+      note: >-
+        The first clause becomes detectable the moment leases carry verdict_id:
+        a lease with none is a lease nothing licensed. The field is specified
+        in the contract; no lease log exists yet to check it against.

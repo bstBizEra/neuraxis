@@ -218,14 +218,21 @@ items:
     title: The decision register as machine-readable config
     register_ref: section 3.2 Stage 2
     score: 3.65
-    state: planned
+    state: shipped
     owner: neuraxis
+    shipped_in: [v0.16.0]
     gates: []
+    acceptance:
+      - kind: command
+        run: ["neuraxis", "register", "--check"]
+        proves: >-
+          Every ruling's enforcement symbol still imports, every reversal
+          trigger is detectable or owned, and no detector is currently armed.
     note: >-
-      Schedulable now - it was never blocked on T1. Rulings, reversal triggers
-      and the waiver schema as versioned YAML, so a trigger firing is detectable
-      rather than remembered. This file is the same move applied to the build
-      sequence, and is the obvious template.
+      Never blocked on T1. Rulings, reversal triggers and the enforcement
+      points as versioned YAML, so a trigger firing is detectable rather than
+      remembered - and so a ruling cannot detach from the code enforcing it.
+      D-07 is folded in, which makes the register Rev B.
 
   - id: W4
     title: Close Band D (coordination)

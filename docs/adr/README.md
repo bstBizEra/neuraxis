@@ -1,6 +1,6 @@
 # Architecture decision records
 
-Eight decisions shape everything in this package. Until now they were true of
+Nine decisions shape everything in this package. Until now they were true of
 the code and written down in three different places — a README section called
 "design decisions worth knowing", a roadmap retrospective, and a project doc
 that only some readers have. That is the same failure this package exists to
@@ -21,6 +21,7 @@ with no ADR does not exist: it is a preference, and preferences lose.
 | [0006](0006-floors-are-constants.md) | Non-compensable floors are constants in code, not registry settings | Accepted |
 | [0007](0007-l0-shells-out.md) | L0 reaches the gate by shelling out to the CLI | Accepted |
 | [0008](0008-roadmap-is-a-graph.md) | The roadmap is a dependency graph resolved against the live gate | Accepted |
+| [0009](0009-a-ruling-names-its-enforcement.md) | A ruling names the code that enforces it | Accepted |
 
 ## How these relate to ILR-001-DR
 

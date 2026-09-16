@@ -444,14 +444,35 @@ def test_cli_blocks_while_the_freeze_is_in_force(capsys):
     assert main(["roadmap"]) == 10
     out = capsys.readouterr().out
     assert "FREEZE IN FORCE" in out
-    assert "ACTIONABLE NOW" in out
+    assert ("ACTIONABLE NOW" in out) or ("NOTHING IS ACTIONABLE" in out)
 
 
 def test_cli_next_shows_the_queue_without_the_blocked_list(capsys):
     main(["roadmap", "--next"])
     out = capsys.readouterr().out
-    assert "ACTIONABLE NOW" in out
+    assert ("ACTIONABLE NOW" in out) or ("NOTHING IS ACTIONABLE" in out)
     assert "BLOCKED\n" not in out
+
+
+def test_an_empty_queue_says_so_rather_than_printing_a_blank_heading(tmp_path, capsys):
+    """The live case since W8 shipped: every remaining item waits on an external.
+
+    An empty list under a confident heading reads as "nothing to do". The
+    output has to distinguish *finished* from *entirely blocked*, because they
+    call for opposite responses.
+    """
+    body = """
+        roadmap: test
+        externals:
+          EXT-A: {title: x, owner: somebody, attained: false}
+        items:
+          - {id: A, title: A, state: planned, owner: me, gates: [{kind: external, id: EXT-A}]}
+    """
+    path = _write(tmp_path, textwrap.dedent(body).lstrip())
+    main(["roadmap", "--roadmap", str(path)])
+    out = capsys.readouterr().out
+    assert "NOTHING IS ACTIONABLE" in out
+    assert "Every item waits on something" in out
 
 
 def test_cli_item_reports_every_gate_and_why(capsys):
@@ -470,7 +491,7 @@ def test_cli_json_carries_the_graph(capsys):
     main(["--json", "roadmap"])
     payload = json.loads(capsys.readouterr().out)
     assert payload["freeze_in_force"] is True
-    assert payload["actionable"]
+    assert isinstance(payload["actionable"], list)
     assert payload["contradictions"] == []
     first = payload["items"][0]
     assert {"id", "state", "verdict", "actionable", "gates", "blockers"} <= set(first)

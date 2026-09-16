@@ -1,6 +1,6 @@
 # neuraxis — Roadmap
 
-**Current:** v0.15.0 — ILR-001 Rev 0.2: the framework document amended to match its own rulings. 4 of 10 controls wired, on an unauthenticated substrate until T1. 680 Python tests + 24 JS contract tests.
+**Current:** v0.16.0 — W8: the register watches its own rulings. 4 of 10 controls wired, on an unauthenticated substrate until T1. 722 Python tests + 24 JS contract tests.
 **To:** v1.0 — an operational governance layer for BST-SA.
 **Governing constraint:** one task at a time, CI green = done.
 
@@ -72,25 +72,80 @@ not cover it.
 | v0.13.0 L0 integration contract (D-07) | **shipped** |
 | v0.14.0 the plan becomes a graph | **shipped** |
 | v0.15.0 ILR-001 Rev 0.2 | **shipped** |
+| v0.16.0 W8 — the register as config | **shipped** |
 | v1.0 hardening | all four items shipped; **deliberately not tagged** while zero bands are attainable — see the v1.0 section |
 
 Ask the tool rather than this table:
 
 ```
 $ neuraxis roadmap --next
-ACTIONABLE NOW
-  3.65  W8    The decision register as machine-readable config  [neuraxis]
+NOTHING IS ACTIONABLE
+  Every item waits on something. The blockers are below.
 
 FREEZE IN FORCE (ILR-001-DR-3.3)
   - W9 is partial, waiting on external T1, external L0-ENTRY-POINTS
   - W2 is partial, waiting on external L0-ENTRY-POINTS
 ```
 
-**One actionable item out of eighteen.** That is not a failure of the plan, it
-is the plan being honest: everything else waits on T1, on an L0 entry point, or
-on a band that cannot open until T1 lands. Before the graph existed, the same
-fact was spread across eleven separate occurrences of the phrase *blocked on
-T1*, and nobody could have told you the count.
+**Zero actionable items out of nineteen, as of v0.16.0.** W8 was the last one
+that moved without somebody else, and it shipped. Every remaining item waits on
+T1, on an L0 entry point, on a schema, on a drill procedure, on a deploy target,
+or on a band that cannot open until T1 lands.
+
+That is not the plan failing. It is the plan saying, precisely and without
+argument, that **the constraint is no longer engineering.** Before the graph
+existed the same fact was spread across eleven separate occurrences of the
+phrase *blocked on T1*, and nobody could have told you the count. The useful
+output is now `EXTERNALS, BY OWNER`: it is the list of conversations that have
+to happen before anything else moves.
+
+---
+
+## v0.16.0 — W8: the register watches its own rulings — SHIPPED
+
+The last item on the build sequence that moved without somebody else.
+
+The decision register makes two demands of itself: *a ruling with no reversal
+condition is dogma*, and *a ruling with no enforcement point is an opinion that
+loses to schedule pressure*. Both were true of the document and enforced by
+nothing.
+
+`src/neuraxis/config/register.yaml` carries the seven rulings, and two
+invariants make it more than a transcript.
+
+**Every ruling names the symbol that enforces it, and the symbol must import.**
+This is the one that earns the file. A document can describe an enforcement
+point renamed three releases ago and read exactly as convincingly as one that
+exists — and nothing notices, because the tests exercise the code, not the claim
+about the code. Rename `NON_COMPENSABLE_FLOOR` and the register stops loading.
+
+**Every reversal trigger is detectable or owned.** Three have detectors. One
+(D-06) is `by_construction` with a stated reason it cannot fire — the block
+derives from the matrix, so there is no clause to drift. The other four name an
+owner and a cadence, because they genuinely cannot be watched by a machine: *an
+external party cites an ordinal level back to BST in writing* arrives in an
+inbox, not in the evidence sink. **A trigger that is neither fails to load.**
+
+Three distinctions the output makes out loud:
+
+- **`NOT RUN` is not `CLEAR`.** One means nobody looked.
+- **`WATCHED` is not a weaker `CLEAR`.** It means the named person is the entire
+  control, and the report lists them by name so that is visible rather than
+  assumed.
+- **A detector exiting neither 0 nor the armed code is `ARMED`.** It faulted, so
+  the trigger it watches is unwatched. Reading that as clear is the
+  unrecognised-exit-code failure inside the thing that watches for failures.
+
+**D-07 is folded in**, which makes this the register's Rev B and closes the last
+inconsistency with ILR-001 Rev 0.2, which had been citing it as though it were.
+
+One bug worth recording, because it is the same bug twice. The detectors
+originally spelled their command as the literal string `neuraxis`, which made
+them depend on a PATH entry — a PATH miss would have reported a trigger armed
+because the tool was installed somewhere else. That is D-07's own
+substitutability problem, occurring inside the thing that watches D-07. They now
+resolve through `NEURAXIS_BIN` / `NEURAXIS_BIN_ARGS`, then PATH, then this
+interpreter.
 
 ---
 

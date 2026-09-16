@@ -52,6 +52,7 @@ from .model import (
 from .providers import ProviderOutcome, get_provider, providers_for, run_provider
 from .providers.registry import UnknownProviderError, coverage
 from .registry import load_registry, parse_duration, registry_digest
+from .register import ARMED, RegisterError, UNRUN, WATCHED, load_register
 from .roadmap import BLOCKED, READY, UNKNOWN, RoadmapError, load_roadmap
 from .resolver import BandResolver
 from .scorecard import measure
@@ -520,6 +521,112 @@ def cmd_roadmap(args: argparse.Namespace) -> int:
     if report.contradictions or report.freeze_in_force:
         return EXIT_BY_DECISION[Decision.DENY]
     return EXIT_OK
+
+
+def cmd_register(args: argparse.Namespace) -> int:
+    """The decision register, with every ruling attached to the code enforcing it.
+
+    A ruling with no enforcement point is an opinion that loses to schedule
+    pressure -- the register says so about itself. So every ruling here names
+    the symbol that enforces it, and the symbol must import or the register
+    does not load.
+
+    Exit 10 when any reversal trigger is armed. `NOT RUN` is not `CLEAR`: it
+    means nobody looked.
+    """
+    try:
+        register = load_register(args.register_file)
+    except RegisterError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    capabilities: tuple[str, ...] = ()
+    try:
+        registry, _ = _load(args)
+        capabilities = tuple(registry.capabilities)
+    except NeuraxisError as exc:
+        print(f"note: capability enforcement unchecked ({exc})", file=sys.stderr)
+
+    report = register.resolve(
+        run_detectors=args.check, timeout=float(args.timeout), capabilities=capabilities
+    )
+
+    if args.ruling:
+        one = next((r for r in report.rulings if r.ruling.id == args.ruling), None)
+        if one is None:
+            print(f"error: no ruling {args.ruling} in {register.name}", file=sys.stderr)
+            return EXIT_ERROR
+        r = one.ruling
+        lines = [f"{r.id}  {r.title}"]
+        if r.question:
+            lines.append(f"  question: {r.question}")
+        lines.append(f"  ruling:   {r.ruling}")
+        if r.score is not None:
+            lines.append(f"  score:    {r.score:.2f}" + ("   (amends the draft)" if r.amends_draft else ""))
+        lines.append("  enforced at:")
+        for e in r.enforcement:
+            lines.append(f"    {e.describe()}")
+            if e.note:
+                lines.append(f"      {e.note}")
+        if one.missing:
+            lines.append(f"  MISSING from the registry: {', '.join(one.missing)}")
+        if r.reversal:
+            lines.append(f"  reverses if: {r.reversal.trigger}")
+            if r.reversal.fallback:
+                lines.append(f"  fallback:    {r.reversal.fallback}")
+            lines.append(f"  trigger:     {one.trigger.state} - {one.trigger.detail}")
+            if r.reversal.divergence:
+                lines.append(f"  DIVERGENCE:  {r.reversal.divergence}")
+            if r.reversal.note:
+                lines.append(f"  note:        {r.reversal.note}")
+        _emit(one.to_dict(), as_json=args.json, text="\n".join(lines))
+        return EXIT_BY_DECISION[Decision.DENY] if one.trigger.armed else EXIT_OK
+
+    lines = [
+        f"{register.name} Rev {register.revision or '-'}   {len(report.rulings)} rulings",
+        "",
+    ]
+    for st in report.rulings:
+        mark = "!" if st.trigger.armed else " "
+        amends = "amends" if st.ruling.amends_draft else "      "
+        lines.append(
+            f"{mark} {st.ruling.id}  {st.trigger.state:<8} {amends}  {st.ruling.title}"
+        )
+    lines += ["", "ENFORCEMENT"]
+    for st in report.rulings:
+        points = ", ".join(e.describe() for e in st.ruling.enforcement)
+        lines.append(f"  {st.ruling.id}  {points}")
+        if st.missing:
+            lines.append(f"        MISSING from the registry: {', '.join(st.missing)}")
+
+    if report.watched:
+        lines += ["", "WATCHED BY A PERSON, NOT A MACHINE"]
+        for st in report.watched:
+            rev = st.ruling.reversal
+            owner = rev.owner if rev else "-"
+            review = rev.review if rev else "-"
+            lines.append(f"  {st.ruling.id}  {owner} ({review})")
+            if rev:
+                lines.append(f"        {rev.trigger}")
+
+    if report.armed:
+        lines += ["", "TRIGGERS ARMED"]
+        for st in report.armed:
+            lines.append(f"  {st.ruling.id}  {st.trigger.detail}")
+            if st.ruling.reversal and st.ruling.reversal.fallback:
+                lines.append(f"        fallback: {st.ruling.reversal.fallback}")
+
+    if not args.check:
+        pending = sum(1 for st in report.rulings if st.trigger.state == UNRUN)
+        if pending:
+            lines += [
+                "",
+                f"NOTE: {pending} detector(s) were not run. Pass --check. NOT RUN is not "
+                "CLEAR - it means nobody looked.",
+            ]
+
+    _emit(report.to_dict(), as_json=args.json, text="\n".join(lines))
+    return EXIT_BY_DECISION[Decision.DENY] if report.armed else EXIT_OK
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -1280,6 +1387,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--timeout", default=60.0, type=float, help="seconds per command gate")
     p.set_defaults(func=cmd_roadmap)
+
+    p = sub.add_parser(
+        "register", help="the decision register: what each ruling enforces, and what would reverse it"
+    )
+    p.add_argument("--register", default=None, dest="register_file", help="path to register.yaml")
+    p.add_argument("--ruling", default=None, help="one ruling, in full")
+    p.add_argument(
+        "--check", action="store_true",
+        help="run the reversal detectors. Without it nobody looked, which is not the same as clear",
+    )
+    p.add_argument("--timeout", default=60.0, type=float, help="seconds per detector")
+    p.set_defaults(func=cmd_register)
 
     p = sub.add_parser("status", help="band attainment against current attestations")
     p.set_defaults(func=cmd_status)
