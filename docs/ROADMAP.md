@@ -404,3 +404,42 @@ Full runbook in [`docs/RELEASE.md`](RELEASE.md), including what the ruleset
 does **not** claim: one person opening and merging their own pull request is
 weaker than two-person review, and nothing here authenticates an author. Same
 limit as everywhere else - it closes at T1.
+
+---
+
+## v1.0 - Threat model written down (2026-09-16)
+
+[`docs/THREAT-MODEL.md`](THREAT-MODEL.md) closes the v1.0 item *"threat model
+written down explicitly (currently implicit in the fail-closed tests)"* and
+answers the question v1.0 was told to answer. The answer has not changed: the
+cheapest way to obtain an ALLOW you should not have is **not to call the gate**.
+The document says so in §5.1 rather than leaving it implied.
+
+Three things in it are new rather than restated:
+
+**The 35 findings are classified, not listed.** Three adversarial reviews at
+v0.6.0, v0.8.0 and v0.9.0, every finding reproduced by execution. §5.3 sorts
+them into six classes - name comparison, a boundary that bounds nothing,
+permissive by omission, counting and aggregation, two answers to one question,
+parsing and coercion - each with the rule it yields. The list is a changelog;
+the classes are reusable.
+
+And the pattern behind all four critical findings was the same, which is the
+part worth carrying: **a correct argument applied one context too far.** A
+principal fold was safe because "a collision produces a denial" - true, until
+the same fold was reused where a collision produces a grant. That happened
+twice, a release apart. What to watch for in review is not an unguarded path
+but a guard whose justification quietly stopped being true.
+
+**§7 turns D-07 and D-08 into one decision.** This account has no paid plan and
+no organisation. Repository rulesets are available on public repos at that tier
+- demonstrated, not assumed, by creating one and having a direct push refused
+with `GH013`. On a private repo at the same tier there is no ruleset and no
+branch protection. So keeping the kernel repos public buys the enforcement
+surface T1 needs, for free, today; going private removes it unless the account
+upgrades. What is exposed is the design, not the state: `*.jsonl` is gitignored
+and no attestation, waiver, envelope or evidence record is tracked.
+
+**§8 is a residual risk register**, and R1-R6 are all Critical or High and all
+closed by T1 and nothing else. That is the document's real conclusion: no
+further work inside this package moves them, and has not since v0.3.
