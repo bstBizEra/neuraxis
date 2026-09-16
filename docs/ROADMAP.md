@@ -1,6 +1,6 @@
 # neuraxis — Roadmap
 
-**Current:** v0.7.0 — evidence records close the verdict→audit edge. 4 of 10 controls wired, on an unauthenticated substrate until T1. 305 Python tests + 19 JS contract tests.
+**Current:** v0.8.0 - the exception path: expiring, recorded waivers whose bounds are enforced in code, not configured in YAML. 4 of 10 controls wired, on an unauthenticated substrate until T1. 389 Python tests + 19 JS contract tests.
 **To:** v1.0 (operational governance layer for BST-SA)
 **Governing constraint:** one task at a time, CI green = done.
 
@@ -12,6 +12,8 @@
 | v0.3.1 Windows portability | **shipped** |
 | v0.4 loop contracts | **Evidence Record shipped as v0.7.0**; Canonical Lesson / Weakness Signal still blocked on T3/T4 |
 | v0.5 maw-js client | **shipped** |
+| v0.7.0 evidence records | **shipped** |
+| v0.8.0 waivers + monotonicity (D-05/D-06) | **shipped** |
 | v0.6 service mode | not until a caller needs it |
 | v1.0 hardening | **partially shipped as v0.6.0** — review done, fixable findings closed, structural limits documented |
 
@@ -206,3 +208,75 @@ v0.2 is the only item with no external dependency, which is a second reason it g
 - **A web dashboard.** `neuraxis status` is the interface. A dashboard adds a surface that can display stale state convincingly.
 - **Auto-attestation on successful task completion.** Tempting and wrong: it makes the system attest itself, which is the `V = 0` failure at the control layer.
 - **Relaxing a window because a drill is inconvenient.** That is gate erosion. Change the window deliberately through a ratified registry change, or fix the drill.
+
+---
+
+## v0.8.0 - The exception path (ILR-001-DR D-05, D-06) - SHIPPED
+
+**Why this and not more provider wiring.** The v0.6.0 review established that
+wiring a provider onto an unauthenticated substrate grows forgeable surface
+without growing what is proven, so the remaining six wait on T1. D-05 does
+not: it is the ruling that the gate needs an exception path, and that the
+path must ship *before* it is needed, because a gate retrofitted onto a
+system that already holds the authority is a gate that gets waived.
+
+| Piece | Detail |
+|---|---|
+| `Waiver` | control, bands, accountable human, compensating control, ratification reference, issued_at, hard expiry, optional `renews` |
+| Non-compensable floor | GV-01/02/03/08 unwaivable, as a constant in code. A registry may add to the set; it cannot remove from it |
+| Bounds | max TTL 90d, max 2 active, max 1 renewal - ceilings in code, tightenable by registry, never loosenable |
+| Self-waiver ban | a waiver never licenses its own issuer or accountable principal (NX-INV-2 applied to the exception path) |
+| Monotonicity | `requires(band)` must be a superset of every prerequisite's, asserted on load |
+| Single root | exactly one band may declare no prerequisite, so the staircase reaches the ground |
+| Non-delegable floor | a non-delegable capability's band must require every control, so IL-32 cannot be re-homed somewhere cheaper |
+| Reporting | `BandStatus.conditional`, `Verdict.waivers`, `neuraxis waivers` (exit 10 when a reversal trigger is armed), `neuraxis waive` |
+
+**Acceptance - met**
+
+- [x] A waiver licenses a band whose control is unattested, and says so in every verdict it touches
+- [x] A non-compensable control is refused at load, at issue, and with no registry block present at all
+- [x] A waiver expires with nothing running; the boundary resolves against the waiver
+- [x] The self-waiver ban survives case, whitespace, invisible codepoints and NFKC confusables
+- [x] Renewal beyond depth 1 refused; parallel renewals of one root refused; tiled unlinked waivers on one scope refused
+- [x] Over the active cap, every waiver is void and the denial says so
+- [x] Obligations are unchanged by a waiver
+- [x] Band status computed once per evaluation, at one instant
+
+**What a second adversarial review found, and what it cost.** Eleven findings,
+two of them critical, every one reproduced by execution before it was fixed.
+The two that mattered:
+
+1. **One invisible codepoint defeated both the self-waiver ban and NX-INV-2.**
+   `"agent-drafter​"` renders identically to `"agent-drafter"`, survives
+   `strip()`, and compared unequal. The verifier-independence bypass needed no
+   waiver at all and had been live since v0.6.0 - the single rule ILR-001-DR
+   D-04 calls the cheapest high-value control BST can ship. Principal names now
+   fold through NFKC, drop format characters, casefold and drop combining
+   marks; a record containing an invisible character is refused outright.
+2. **Deleting four lines of YAML made the integrity controls waivable.** The
+   non-compensable set was read from the registry and defaulted to empty, so
+   omission - not argument - inverted D-06. The floor is now a constant in
+   code that configuration can only add to.
+
+The remaining nine: renewal stars, waiver tiling, a second root band, a
+non-delegable capability re-homed to a cheaper band, direct construction
+bypassing every parse-time check, a `bands` string doing substring matching,
+a voided waiver set reported as a plain missing attestation, waiver ids
+re-derived rather than carried, and an unmemoised traversal costing 11 million
+status computations at 30 bands. All closed, all with a regression test in
+`tests/test_waiver_review.py`.
+
+**What the exception path still cannot do.** `issued_by`, `accountable` and a
+request's `identity` are self-declared strings. The self-waiver ban compares
+what the record claims against what the request claims, and binds neither to
+an authenticated subject. It stops an honest mistake and a careless script,
+not a determined author of the waiver file. That is T1's job, and it is the
+same limit as everything else here: the substrate is unauthenticated until the
+kernel boundary lands.
+
+**Not built, deliberately:** a waiver for KBS-001 D-06 (the single code owner).
+The mechanism exists; issuing the record now would spend one of two active
+slots licensing a band that is blocked on four non-compensable controls
+anyway. It is issued when T1 lands and GV-07 is actually what stands in the
+way - not before, because an active waiver that licenses nothing is exactly
+the decorative governance this package is against.

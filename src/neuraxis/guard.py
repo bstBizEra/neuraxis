@@ -24,6 +24,7 @@ from .errors import NeuraxisError
 from .gate import GovernanceGate
 from .model import AuthorityRequest, Risk, Verdict
 from .registry import Registry
+from .waiver import WaiverRegister
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -44,8 +45,17 @@ class CapabilityDenied(NeuraxisError):
 class CapabilityGuard:
     """Wraps a gate with call-site ergonomics."""
 
-    def __init__(self, registry: Registry, attestations: AttestationStore) -> None:
-        self.gate = GovernanceGate(registry, attestations)
+    def __init__(
+        self,
+        registry: Registry,
+        attestations: AttestationStore,
+        waivers: WaiverRegister | None = None,
+    ) -> None:
+        # Waivers are passed through rather than defaulted away. Omitting them
+        # would make the guard quietly stricter than the gate, and a wrapper
+        # that answers differently from the thing it wraps is how a caller
+        # ends up bypassing the wrapper.
+        self.gate = GovernanceGate(registry, attestations, waivers)
 
     def check(self, request: AuthorityRequest) -> Verdict:
         """Evaluate without raising. Use when you need to route on the verdict."""

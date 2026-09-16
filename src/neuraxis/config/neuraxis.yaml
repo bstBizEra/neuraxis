@@ -111,6 +111,18 @@ enforcement:
   mode: l0-mechanical
   on_missing_attestation: deny
   attestation_max_age: 24h
+  # The exception path (ILR-001-DR D-05). A programme with no exception path
+  # grows an undocumented one; a path with no expiry becomes the architecture.
+  # Numbers are the register's own. Widening any of them is a kernel change.
+  waivers:
+    # ILR-001-DR D-06: integrity controls have no waiver path at all. A sink a
+    # human promises not to rewrite is a rewritable sink, and an internal party
+    # performing external attestation is not external attestation. No expiry,
+    # no named-accountable, no compensating control makes these waivable.
+    non_compensable: [GV-01, GV-02, GV-03, GV-08]
+    max_ttl: 90d        # longer than this is a standing waiver
+    max_active: 2       # a third means the matrix is mis-calibrated, not the band
+    max_renewals: 1     # renewed twice is D-05's reversal trigger
 
 scorecard:
   # Minimum per-term value required to operate at a given band.

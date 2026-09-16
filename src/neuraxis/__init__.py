@@ -26,6 +26,7 @@ from .errors import (
     RegistryError,
     UnknownCapabilityError,
     UnknownControlError,
+    WaiverError,
 )
 from .evidence import (
     DischargeRecord,
@@ -63,8 +64,9 @@ from .providers import (
 from .registry import Registry, load_registry
 from .resolver import BandResolver
 from .scorecard import Scorecard, measure
+from .waiver import Waiver, WaiverPolicy, WaiverRegister
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 FRAMEWORK = "bst-neuraxis"
 PRINCIPLE = "governed-evolution"
 
@@ -104,6 +106,10 @@ __all__ = [
     "UnknownControlError",
     "UnwiredProvider",
     "Verdict",
+    "Waiver",
+    "WaiverError",
+    "WaiverPolicy",
+    "WaiverRegister",
     "__version__",
     "audit_obligations",
     "get_provider",

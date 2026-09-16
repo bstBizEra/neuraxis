@@ -360,3 +360,44 @@ python -m pytest -q --cov=neuraxis --cov-report=term-missing
 `src/neuraxis/config/neuraxis.yaml` is **kernel** under KBS-001 (K-04 family). Agents hold no write path to it. Changing a band's requirements, the non-delegable floor, or a scorecard threshold is a ratified kernel change, not a code change.
 
 ILR-001 has the full framework: the 33 capabilities, the seven bands, the ten governance controls, the Capability–Authority Gate matrix, the three loops and their contracts.
+
+## Waivers - the exception path
+
+A programme with no exception path grows an undocumented one. A path with no
+expiry becomes the architecture. So Neuraxis has one, and its bounds are in
+code rather than in configuration.
+
+```bash
+neuraxis waive --id W-D06 --control GV-07 --band BAND-G \
+  --accountable "OP-Vily" --issued-by ops-console \
+  --compensating "break-glass merge logged to the evidence sink; E-12 alert on use" \
+  --ratification-ref KBS-001/7.7 --ttl 30d
+
+neuraxis waivers        # exit 10 while a reversal trigger is armed
+neuraxis status         # the band now reads CONDITIONAL, never ATTAINED
+```
+
+A waiver names the control, the bands it covers, a human accountable for it, a
+compensating control, a ratification reference and a hard expiry. Every one of
+those is required; a blank is a malformed record, not a lenient one.
+
+**What a waiver cannot do.**
+
+| | |
+|---|---|
+| Waive GV-01, GV-02, GV-03 or GV-08 | Non-compensable (ILR-001-DR D-06). A constant in code: a registry may add controls to the set, never remove them. An append-only sink a human promises not to rewrite is a rewritable sink |
+| Outlive 90 days | Ceiling in code. One renewal, then the matrix gets re-cut instead |
+| License its own issuer or accountable principal | NX-INV-2 applied to the exception path. Principal names are compared after NFKC folding with format characters dropped, so an invisible codepoint does not make one principal into two |
+| Exist three at a time | Over the cap every waiver is void, and the denial says so rather than reporting the control as merely unattested |
+| Cancel a per-request obligation | A waiver says a control cannot currently be proven at programme level. It does not say an individual request need not comply |
+| Make a band read as plainly attained | `BandStatus.conditional`, `Verdict.waivers` and the ALLOW's first reason line all say the authority is conditional |
+
+**And its limit.** `issued_by`, `accountable` and a request's `identity` are
+self-declared strings on an unauthenticated substrate. The self-waiver ban
+compares what the record claims against what the request claims. It stops an
+honest mistake and a careless script; it does not stop a determined author of
+the waiver file. Nor does anything here stop someone appending two junk
+waivers to void a third party's legitimate one - the cap is fail-closed, which
+makes it a denial-of-service in the hands of anyone with write access to the
+file. Both are the same limit as the evidence sink's: the substrate is
+unauthenticated until KBS-001 T1 issues real identities.

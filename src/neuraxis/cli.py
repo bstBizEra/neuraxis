@@ -49,6 +49,7 @@ from .providers.registry import UnknownProviderError, coverage
 from .registry import load_registry, parse_duration
 from .resolver import BandResolver
 from .scorecard import measure
+from .waiver import Waiver, WaiverRegister
 
 EXIT_OK = 0
 EXIT_ERROR = 2
@@ -70,6 +71,16 @@ def _load(args: argparse.Namespace) -> tuple[Any, AttestationStore]:
     registry = load_registry(args.registry)
     store = AttestationStore.from_file(args.attestations)
     return registry, store
+
+
+def _load_waivers(args: argparse.Namespace, registry: Any) -> WaiverRegister:
+    """Load the waiver file bound to this registry's policy.
+
+    An absent file means no waivers, which is the correct default. A malformed
+    one raises: a half-read waiver file would under-constrain the gate the same
+    way a half-read registry would.
+    """
+    return WaiverRegister.for_registry(registry, path=getattr(args, "waivers", None))
 
 
 def _force_utf8_io() -> None:
@@ -155,20 +166,34 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     registry, store = _load(args)
-    resolver = BandResolver(registry, store)
+    waivers = _load_waivers(args, registry)
+    resolver = BandResolver(registry, store, waivers)
+    # No claimed identities: this is a report of what the waiver set licenses
+    # for someone, not an authority decision. `gate` is the licensing path and
+    # always passes the requesting principal.
     statuses = resolver.all_statuses()
 
     payload = {
         "attestations_on_file": len(store),
+        "waivers_active": [w.id for w in waivers.active()],
         "bands": {bid: st.to_dict() for bid, st in statuses.items()},
         "attained": [bid for bid, st in statuses.items() if st.attained],
+        "conditional": [bid for bid, st in statuses.items() if st.conditional],
     }
 
     rows = ["BAND        STATUS        DETAIL"]
     for bid, st in statuses.items():
-        mark = "ATTAINED" if st.attained else "BLOCKED"
+        if st.conditional:
+            mark = "CONDITIONAL"
+        elif st.attained:
+            mark = "ATTAINED"
+        else:
+            mark = "BLOCKED"
         detail = st.reasons[0] if st.reasons else ""
         rows.append(f"{bid:<11} {mark:<13} {detail}")
+    for line in waivers.triggers():
+        rows.append("")
+        rows.append(f"TRIGGER ARMED  {line}")
     if not store:
         rows.append("")
         rows.append(
@@ -181,7 +206,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def cmd_gate(args: argparse.Namespace) -> int:
     registry, store = _load(args)
-    gate = GovernanceGate(registry, store)
+    gate = GovernanceGate(registry, store, _load_waivers(args, registry))
 
     if args.request == "-":
         try:
@@ -234,6 +259,8 @@ def cmd_gate(args: argparse.Namespace) -> int:
             print(f"  - {reason}")
         if verdict.obligations:
             print(f"  obligations: {', '.join(o.value for o in verdict.obligations)}")
+        if verdict.waivers:
+            print(f"  CONDITIONAL on waiver(s): {', '.join(verdict.waivers)}")
     return EXIT_BY_DECISION[verdict.decision]
 
 
@@ -306,7 +333,7 @@ def cmd_attest(args: argparse.Namespace) -> int:
 
 def cmd_score(args: argparse.Namespace) -> int:
     registry, store = _load(args)
-    resolver = BandResolver(registry, store)
+    resolver = BandResolver(registry, store, _load_waivers(args, registry))
     attained = resolver.attained_bands()
     band = args.band or (attained[-1] if attained else next(iter(registry.bands)))
     required = registry.band(band).requires
@@ -397,6 +424,122 @@ def cmd_obligations(args: argparse.Namespace) -> int:
     return EXIT_OK if audit.clean else EXIT_BY_DECISION[Decision.DENY]
 
 
+def cmd_waivers(args: argparse.Namespace) -> int:
+    """Report the exception path: what is waived, by whom, until when.
+
+    Exits 10 when an ILR-001-DR D-05 reversal trigger is armed. A trigger is
+    not an error in the file — the records are well formed — it is a statement
+    that the matrix is being held open by exception more than the ruling
+    permits, and it should fail a pipeline that checks it.
+    """
+    registry, _ = _load(args)
+    waivers = _load_waivers(args, registry)
+    at = now_utc()
+    active_ids = {w.id for w in waivers.active(at)}
+    triggers = waivers.triggers(at)
+
+    payload = {
+        "policy": {
+            "non_compensable": sorted(registry.waiver_policy.non_compensable),
+            "max_ttl": _window(registry.waiver_policy.max_ttl),
+            "max_active": registry.waiver_policy.max_active,
+            "max_renewals": registry.waiver_policy.max_renewals,
+        },
+        "waivers": [
+            {**w.to_dict(), "active": w.id in active_ids} for w in waivers
+        ],
+        "active": sorted(active_ids),
+        "triggers": list(triggers),
+    }
+
+    lines = [
+        f"non-compensable: {', '.join(sorted(registry.waiver_policy.non_compensable)) or 'none'}"
+        "  (no waiver path at any TTL)",
+        f"bounds: max_ttl={_window(registry.waiver_policy.max_ttl)} "
+        f"max_active={registry.waiver_policy.max_active} "
+        f"max_renewals={registry.waiver_policy.max_renewals}",
+        "",
+    ]
+    if not len(waivers):
+        lines.append("No waivers on file. The gate is unconditional.")
+    else:
+        lines.append("ID                STATE     CONTROL  BANDS            EXPIRES")
+        for w in waivers:
+            state = "ACTIVE" if w.id in active_ids else (
+                "PENDING" if at < w.issued_at else "EXPIRED"
+            )
+            lines.append(
+                f"{w.id:<17} {state:<9} {w.control:<8} "
+                f"{','.join(w.bands):<16} {w.expires_at.isoformat()}"
+            )
+            lines.append(
+                f"    accountable: {w.accountable}   issued by: {w.issued_by}"
+            )
+            lines.append(f"    compensating: {w.compensating_control}")
+            lines.append(f"    ratification: {w.ratification_ref}")
+    for line in triggers:
+        lines.append("")
+        lines.append(f"TRIGGER ARMED: {line}")
+
+    _emit(payload, as_json=args.json, text="\n".join(lines))
+    return 10 if triggers else EXIT_OK
+
+
+def cmd_waive(args: argparse.Namespace) -> int:
+    """Issue a waiver. Validated against the whole register before it is written.
+
+    Validation runs over the existing records plus this one, so a waiver that
+    would breach the renewal depth or waive a non-compensable control is
+    refused at issue rather than discovered at the next load — by which time
+    someone is relying on it.
+    """
+    registry, _ = _load(args)
+    existing = _load_waivers(args, registry)
+    if existing.get(args.id) is not None:
+        print(f"error: waiver {args.id} already exists", file=sys.stderr)
+        return EXIT_ERROR
+
+    issued_at = now_utc()
+    try:
+        ttl = parse_duration(args.ttl)
+    except NeuraxisError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    candidate = Waiver(
+        id=args.id.strip(),
+        control=args.control.strip(),
+        bands=tuple(b.strip() for b in args.band),
+        accountable=args.accountable.strip(),
+        issued_by=args.issued_by.strip(),
+        compensating_control=args.compensating.strip(),
+        ratification_ref=args.ratification_ref.strip(),
+        issued_at=issued_at,
+        expires_at=issued_at + ttl,
+        renews=args.renews.strip() if args.renews else None,
+    )
+    try:
+        WaiverRegister.for_registry(registry, waivers=[*existing, candidate])
+    except NeuraxisError as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    WaiverRegister.append_to_file(args.waivers, candidate)
+    payload = candidate.to_dict()
+    _emit(
+        payload,
+        as_json=args.json,
+        text=(
+            f"waiver {candidate.id} issued: {candidate.control} for "
+            f"{', '.join(candidate.bands)} until {candidate.expires_at.isoformat()}\n"
+            f"  accountable: {candidate.accountable}\n"
+            f"  compensating: {candidate.compensating_control}\n"
+            f"  it does not license {candidate.issued_by} or {candidate.accountable}"
+        ),
+    )
+    return EXIT_OK
+
+
 def cmd_contract(args: argparse.Namespace) -> int:
     """Emit the CLI contract as JSON.
 
@@ -473,7 +616,8 @@ def cmd_assure(args: argparse.Namespace) -> int:
     is a known gap rather than a regression.
     """
     registry, store = _load(args)
-    resolver = BandResolver(registry, store)
+    waivers = _load_waivers(args, registry)
+    resolver = BandResolver(registry, store, waivers)
     before = set(resolver.attained_bands())
 
     selected = providers_for(args.control, log_path=args.task_log, gate_log_path=args.gate_log, lease_log_path=args.lease_log)
@@ -489,7 +633,7 @@ def cmd_assure(args: argparse.Namespace) -> int:
         store.append_to_file(args.attestations, run.to_attestation())
         runs.append(run)
 
-    after = set(BandResolver(registry, store).attained_bands())
+    after = set(BandResolver(registry, store, waivers).attained_bands())
     opened, closed = sorted(after - before), sorted(before - after)
     failures = [r for r in runs if r.result.outcome is ProviderOutcome.FAIL]
     unwired = [r for r in runs if r.result.outcome is ProviderOutcome.UNWIRED]
@@ -549,6 +693,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--lease-log", default="lease-log.jsonl", dest="lease_log",
         help="L0 lease log consumed by the authority and containment providers (GV-02, GV-06)",
     )
+    parser.add_argument(
+        "--waivers", default="waivers.jsonl", dest="waivers",
+        help="recorded, expiring exceptions to the gate (JSONL); absent means none",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("validate", help="validate registry integrity")
@@ -591,6 +739,31 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("obligations", help="what the gate's ALLOWs owe, and what has been paid")
     p.add_argument("--grace", default=None, help="ignore obligations newer than this, e.g. 30m")
     p.set_defaults(func=cmd_obligations)
+
+    p = sub.add_parser("waivers", help="the exception path: what is waived, by whom, until when")
+    p.set_defaults(func=cmd_waivers)
+
+    p = sub.add_parser("waive", help="issue a recorded, expiring waiver")
+    p.add_argument("--id", required=True, help="stable id; the audit handle for this waiver")
+    p.add_argument("--control", required=True, help="the GV control waived")
+    p.add_argument(
+        "--band", required=True, action="append",
+        help="band this waiver licenses; repeat for several. No default: an "
+             "unscoped waiver is a waiver-by-default",
+    )
+    p.add_argument("--accountable", required=True, help="named person answerable for the gap")
+    p.add_argument("--issued-by", required=True, dest="issued_by", help="issuing principal")
+    p.add_argument(
+        "--compensating", required=True,
+        help="the control standing in for the waived one, in one line",
+    )
+    p.add_argument(
+        "--ratification-ref", required=True, dest="ratification_ref",
+        help="reference to the human ratification of this exception",
+    )
+    p.add_argument("--ttl", required=True, help="hard expiry as a duration, e.g. '30d'")
+    p.add_argument("--renews", default=None, help="id of the waiver this one replaces")
+    p.set_defaults(func=cmd_waive)
 
     p = sub.add_parser("contract", help="machine-readable CLI contract for non-Python clients")
     p.set_defaults(func=cmd_contract)

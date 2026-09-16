@@ -8,7 +8,7 @@ because a half-loaded registry would silently under-constrain the gate.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Mapping
@@ -17,6 +17,7 @@ import yaml
 
 from .errors import CycleError, RegistryError, UnknownCapabilityError, UnknownControlError
 from .model import Band, Capability, GVControl, Risk
+from .waiver import WaiverPolicy
 
 DEFAULT_REGISTRY = Path(__file__).parent / "config" / "neuraxis.yaml"
 
@@ -52,6 +53,7 @@ class Registry:
     on_missing_attestation: str
     enforcement_mode: str
     thresholds: Mapping[str, Mapping[str, float]]
+    waiver_policy: WaiverPolicy = field(default_factory=WaiverPolicy)
 
     # ---- lookups -------------------------------------------------------
 
@@ -198,6 +200,8 @@ def load_registry(path: str | Path | None = None) -> Registry:
             raise RegistryError(f"band {band.id} contains no capabilities")
 
     _assert_acyclic(bands)
+    _assert_monotonic(bands)
+    _assert_single_root(bands)
 
     authority = raw.get("authority", {}) or {}
     role_grants = {
@@ -212,6 +216,7 @@ def load_registry(path: str | Path | None = None) -> Registry:
     for cid in non_delegable:
         if cid not in capabilities:
             raise RegistryError(f"non_delegable references undefined capability {cid}")
+    _assert_non_delegable_floor(bands, capabilities, non_delegable, controls)
 
     try:
         escalate_at_risk = Risk(str(authority.get("escalate_at_risk", "CRITICAL")).upper())
@@ -235,6 +240,8 @@ def load_registry(path: str | Path | None = None) -> Registry:
         if bid not in bands:
             raise RegistryError(f"scorecard threshold references undefined band {bid}")
 
+    waiver_policy = _waiver_policy(enforcement.get("waivers", {}) or {}, controls)
+
     return Registry(
         framework=str(_require(raw, "framework", "root")),
         version=str(_require(raw, "version", "root")),
@@ -249,7 +256,117 @@ def load_registry(path: str | Path | None = None) -> Registry:
         on_missing_attestation=on_missing,
         enforcement_mode=str(enforcement.get("mode", "l0-mechanical")),
         thresholds=thresholds,
+        waiver_policy=waiver_policy,
     )
+
+
+def _waiver_policy(raw: Mapping[str, Any], controls: Mapping[str, GVControl]) -> WaiverPolicy:
+    """Bounds on the exception path (ILR-001-DR D-05, D-06).
+
+    Defaults are the ruling's own numbers. They are read from the registry
+    rather than hard-coded so that widening them is a ratified registry change
+    with a diff, which is the only kind of gate erosion this package is able
+    to make visible.
+    """
+    if not isinstance(raw, Mapping):
+        raise RegistryError("enforcement.waivers must be a mapping")
+
+    listed = raw.get("non_compensable", ()) or ()
+    if isinstance(listed, (str, bytes)):
+        raise RegistryError("enforcement.waivers.non_compensable must be a list of control ids")
+    non_compensable = frozenset(str(c).strip() for c in listed if str(c).strip())
+    for cid in sorted(non_compensable):
+        if cid not in controls:
+            raise RegistryError(f"non_compensable references undefined control {cid}")
+
+    max_ttl = parse_duration(raw.get("max_ttl", "90d"))
+
+    def _bound(key: str, default: int) -> int:
+        value = raw.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, int):
+            # bool is an int subclass, and `max_active: true` must not read as 1.
+            raise RegistryError(
+                f"enforcement.waivers.{key} must be a non-negative integer, got {value!r}"
+            )
+        if value < 0:
+            raise RegistryError(f"enforcement.waivers.{key} must be >= 0, got {value}")
+        return value
+
+    return WaiverPolicy(
+        non_compensable=non_compensable,
+        max_ttl=max_ttl,
+        max_active=_bound("max_active", 2),
+        max_renewals=_bound("max_renewals", 1),
+    )
+
+
+def _assert_monotonic(bands: Mapping[str, Band]) -> None:
+    """ILR-001-DR D-05: controls(band) must be a superset of every dependency's.
+
+    A non-monotonic matrix means some transition *reduces* the controls
+    required, which is unauditable and — worse — rewards declaring a higher
+    band in order to escape a control. The register directs that this be
+    asserted rather than assumed, so it is checked on every load rather than
+    reviewed on every edit.
+    """
+    for band in bands.values():
+        required = set(band.requires)
+        for dep_id in band.depends_on:
+            dep = bands[dep_id]
+            dropped = sorted(set(dep.requires) - required)
+            if dropped:
+                raise RegistryError(
+                    f"band {band.id} requires fewer controls than its prerequisite "
+                    f"{dep_id}: {', '.join(dropped)} dropped. The Capability-Authority "
+                    "Gate must be a monotonic staircase; a band that relaxes a control "
+                    "its prerequisite demands is an incentive to claim it"
+                )
+
+
+def _assert_single_root(bands: Mapping[str, Band]) -> None:
+    """Exactly one band may have no prerequisite.
+
+    Monotonicity only constrains a band against the prerequisites it declares,
+    so a second root is a fast lane: a band requiring one cheap control,
+    depending on nothing, hosting whatever capabilities its author assigns it.
+    With one root, every band inherits the root's control set transitively and
+    the staircase actually reaches the ground.
+    """
+    roots = sorted(bid for bid, band in bands.items() if not band.depends_on)
+    if len(roots) > 1:
+        raise RegistryError(
+            f"bands {', '.join(roots)} each declare no prerequisite. A second root "
+            "band bypasses the Capability-Authority staircase entirely: it inherits "
+            "no control from anything. Give it a prerequisite or fold it into one"
+        )
+    if not roots:
+        raise RegistryError("no band is a root; every band declares a prerequisite")
+
+
+def _assert_non_delegable_floor(
+    bands: Mapping[str, Band],
+    capabilities: Mapping[str, Capability],
+    non_delegable: frozenset[str],
+    controls: Mapping[str, GVControl],
+) -> None:
+    """A non-delegable capability's band must require every control.
+
+    IL-31/32/33 are the capabilities ILR-001 says are never independently
+    enabled. Re-homing one into a cheaper band would make it reachable under
+    that band's control set -- and, once waivers exist, under a single waived
+    control. Binding the floor to the full control set makes the re-homing
+    fail at load rather than at the first ALLOW.
+    """
+    for cid in sorted(non_delegable):
+        band = bands[capabilities[cid].band]
+        absent = sorted(set(controls) - set(band.requires))
+        if absent:
+            raise RegistryError(
+                f"{cid} is non-delegable but sits in {band.id}, which does not require "
+                f"{', '.join(absent)}. A non-delegable capability must sit in a band "
+                "that requires every governance control; otherwise the floor is only "
+                "as high as the band it was moved to"
+            )
 
 
 def _assert_acyclic(bands: Mapping[str, Band]) -> None:

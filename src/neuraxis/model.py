@@ -13,6 +13,7 @@ See "known limits" in the README.
 from __future__ import annotations
 
 import json
+import unicodedata
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -104,6 +105,38 @@ class GVControl:
     name: str
     attestation: str
     max_age: timedelta
+
+
+_INVISIBLE = frozenset({"Cf", "Cc", "Cs", "Co", "Cn"})
+
+
+def has_invisible(text: str) -> bool:
+    """True if `text` contains a format, control or unassigned codepoint.
+
+    U+200B, U+FEFF and U+00AD are invisible to a reviewer, survive `strip()`,
+    and make two principal names that render identically compare unequal.
+    A principal name containing one is rejected rather than folded, because a
+    name nobody can see is not a name anybody can be held to.
+    """
+    return any(unicodedata.category(ch) in _INVISIBLE for ch in text)
+
+
+def normalise_principal(text: str) -> str:
+    """Fold a principal name to a comparison key.
+
+    Deliberately aggressive: NFKC, then invisible codepoints dropped, then
+    case-folded, then combining marks stripped. Every step can only make two
+    distinct strings collide, never separate two that matched -- and in both
+    places this key is used (verifier independence, and the self-waiver ban)
+    a collision produces a denial. Over-folding therefore fails closed, while
+    under-folding is the U+200B bypass that lets a principal verify or license
+    itself with one invisible character.
+    """
+    folded = unicodedata.normalize("NFKC", text)
+    folded = "".join(ch for ch in folded if unicodedata.category(ch) not in _INVISIBLE)
+    folded = unicodedata.normalize("NFD", folded.casefold())
+    folded = "".join(ch for ch in folded if unicodedata.category(ch) != "Mn")
+    return folded.strip()
 
 
 @dataclass(frozen=True)
@@ -234,6 +267,10 @@ class Verdict:
     obligations: tuple[Obligation, ...] = ()
     missing_controls: tuple[str, ...] = ()
     evaluated_at: datetime = field(default_factory=now_utc)
+    # Waivers this verdict rests on, transitively through the band closure.
+    # A non-empty tuple means the authority granted is conditional: one or
+    # more controls are unproven and licensed only until the waiver expires.
+    waivers: tuple[str, ...] = ()
 
     @property
     def permits_action(self) -> bool:
@@ -246,6 +283,7 @@ class Verdict:
         data["reasons"] = list(self.reasons)
         data["missing_controls"] = list(self.missing_controls)
         data["evaluated_at"] = self.evaluated_at.isoformat()
+        data["waivers"] = list(self.waivers)
         return data
 
     def to_json(self, *, indent: int | None = 2) -> str:
@@ -261,12 +299,26 @@ class BandStatus:
     missing_controls: tuple[str, ...]
     blocked_by: tuple[str, ...]
     reasons: tuple[str, ...]
+    waived_controls: tuple[str, ...] = ()
+    # Ids of the waivers this band's own attainment consumed. Carried rather
+    # than re-derived: asking the register a second time can return a
+    # different answer (a lapse, or the active cap tripping between calls),
+    # and the disagreement would silently drop the waiver from the record.
+    waiver_ids: tuple[str, ...] = ()
+
+    @property
+    def conditional(self) -> bool:
+        """Attained, but resting on at least one unproven control."""
+        return self.attained and bool(self.waived_controls)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "band": self.band,
             "attained": self.attained,
+            "conditional": self.conditional,
             "missing_controls": list(self.missing_controls),
             "blocked_by": list(self.blocked_by),
             "reasons": list(self.reasons),
+            "waived_controls": list(self.waived_controls),
+            "waiver_ids": list(self.waiver_ids),
         }

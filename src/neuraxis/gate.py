@@ -20,9 +20,18 @@ from datetime import datetime
 
 from .attestation import AttestationStore
 from .errors import NeuraxisError, UnknownCapabilityError
-from .model import AuthorityRequest, Decision, Obligation, Risk, Verdict, now_utc
+from .model import (
+    AuthorityRequest,
+    Decision,
+    Obligation,
+    Risk,
+    Verdict,
+    normalise_principal,
+    now_utc,
+)
 from .registry import Registry
 from .resolver import BandResolver
+from .waiver import WaiverRegister
 
 # Controls whose presence in a band's requirements implies a standing duty on
 # every ALLOW issued for that band.
@@ -39,10 +48,18 @@ _CONTROL_OBLIGATIONS: dict[str, Obligation] = {
 class GovernanceGate:
     """Blocking authority check for one capability invocation."""
 
-    def __init__(self, registry: Registry, attestations: AttestationStore) -> None:
+    def __init__(
+        self,
+        registry: Registry,
+        attestations: AttestationStore,
+        waivers: WaiverRegister | None = None,
+    ) -> None:
         self.registry = registry
         self.attestations = attestations
-        self.resolver = BandResolver(registry, attestations)
+        self.waivers = waivers if waivers is not None else WaiverRegister.empty(
+            registry.waiver_policy
+        )
+        self.resolver = BandResolver(registry, attestations, self.waivers)
 
     # ---- public API ----------------------------------------------------
 
@@ -85,9 +102,22 @@ class GovernanceGate:
             )
 
         # --- Authority: band attainment, reported at the root blocker.
-        blocker = self.resolver.first_blocker(band_id, at=at)
+        #
+        # Claimed identities are passed down because a waiver never licenses
+        # its own issuer or accountable principal. Attainment is therefore a
+        # function of who is asking, not of the registry alone.
+        claimed = frozenset(request.claimed_identities)
+        # One traversal, one instant, one cache: the blocker and the waivers
+        # the closure rests on must be the same evaluation, or an ALLOW can be
+        # reported as unconditional while resting on a waiver.
+        blocker, waivers = self.resolver.authority(band_id, at=at, claimed=claimed)
         if blocker is not None:
-            reasons = [f"{band_id} requires {blocker.band}, which is not attained", *blocker.reasons]
+            headline = (
+                f"{band_id} is not attained"
+                if blocker.band == band_id
+                else f"{band_id} requires {blocker.band}, which is not attained"
+            )
+            reasons = [headline, *blocker.reasons]
             return Verdict(
                 decision=Decision.DENY,
                 capability=capability.id,
@@ -96,6 +126,15 @@ class GovernanceGate:
                 missing_controls=blocker.missing_controls,
             )
 
+        # `waivers` is carried on every non-DENY verdict so that a conditional
+        # authority is recorded as conditional wherever the verdict lands,
+        # including in the evidence sink.
+        #
+        # Obligations are unchanged by a waiver. A waiver says a control cannot
+        # currently be proven at programme level; it does not say an individual
+        # request need not comply. Reading it the other way would let one
+        # signature switch off per-request enforcement, which is the inverse of
+        # what an exception path is for.
         obligations = self._obligations(band.requires)
 
         # --- Evidence requirement: obligations the request must already satisfy.
@@ -134,6 +173,7 @@ class GovernanceGate:
                 band=band_id,
                 reasons=(why, "automation may propose; it may not merge"),
                 obligations=obligations,
+                waivers=waivers,
             )
 
         # --- Risk: escalate above the configured rank even when attained.
@@ -147,17 +187,30 @@ class GovernanceGate:
                     f"{self.registry.escalate_at_risk.value}",
                 ),
                 obligations=obligations,
+                waivers=waivers,
             )
 
+        reasons = [
+            f"{band_id} attained; {request.role} granted; "
+            f"{len(band.requires)} controls current"
+        ]
+        if waivers:
+            # Overwrite rather than append: "controls current" is false when a
+            # control is waived, and a true clause beside a false one still
+            # reads as a clean attainment to anyone skimming the first line.
+            reasons = [
+                f"{band_id} attained conditionally; {request.role} granted; "
+                f"authority rests on waiver(s) {', '.join(waivers)}",
+                "conditional authority: at least one control is unproven and lapses "
+                "with the waiver",
+            ]
         return Verdict(
             decision=Decision.ALLOW,
             capability=capability.id,
             band=band_id,
-            reasons=(
-                f"{band_id} attained; {request.role} granted; "
-                f"{len(band.requires)} controls current",
-            ),
+            reasons=tuple(reasons),
             obligations=obligations,
+            waivers=waivers,
         )
 
     # ---- helpers -------------------------------------------------------
@@ -184,8 +237,11 @@ class GovernanceGate:
                     "NX-INV-2: verification reliability is zero when unspecified",
                 ],
             )
-        claimed = {i.casefold() for i in request.claimed_identities}
-        if verifier.casefold() in claimed:
+        # Normalised, not merely case-folded: `"agent-x​"` renders
+        # identically to `"agent-x"` and would otherwise pass this check with
+        # one invisible codepoint, which defeats NX-INV-2 outright.
+        claimed = {normalise_principal(i) for i in request.claimed_identities}
+        if normalise_principal(verifier) in claimed:
             return self._deny(
                 capability_id,
                 band_id,

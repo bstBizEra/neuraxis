@@ -36,3 +36,12 @@ class UnknownControlError(RegistryError):
 
 class AttestationError(NeuraxisError):
     """An attestation is malformed, future-dated, or otherwise untrustworthy."""
+
+
+class WaiverError(NeuraxisError):
+    """A waiver is malformed, unbounded, or waives a non-compensable control.
+
+    Structural only. Exceeding the active-waiver cap is a policy state, not a
+    malformed record: it voids the exception path rather than raising, so the
+    gate keeps answering and every answer is a denial.
+    """
