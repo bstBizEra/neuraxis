@@ -111,6 +111,11 @@ class GVControl:
     name: str
     attestation: str
     max_age: timedelta
+    #: `probe` or `audit`, and the conformance suite requires the vacuity
+    #: scenario of a probe. Declared here, in the kernel, rather than by the
+    #: source: a source that could declare its own kind could declare its way
+    #: out of the check. It defaults to `probe`, so omitting it tightens.
+    kind: str = "probe"
 
 
 _INVISIBLE = frozenset({"Cf", "Cc", "Cs", "Co", "Cn"})

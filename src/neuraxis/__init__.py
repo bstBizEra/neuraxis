@@ -19,6 +19,13 @@ controls paired to it, enforced mechanically rather than by instruction.
 from __future__ import annotations
 
 from .attestation import AttestationStore
+from .conformance import (
+    ConformanceError,
+    ConformanceReport,
+    ScenarioResult,
+    check_source,
+    scenarios_for,
+)
 from .envelope import Envelope, EnvelopePolicy, EnvelopeRegister, Limit
 from .errors import (
     AttestationError,
@@ -70,7 +77,7 @@ from .resolver import BandResolver
 from .scorecard import Scorecard, measure
 from .waiver import Waiver, WaiverPolicy, WaiverRegister
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 FRAMEWORK = "bst-neuraxis"
 PRINCIPLE = "governed-evolution"
 
@@ -85,6 +92,8 @@ __all__ = [
     "Capability",
     "CapabilityDenied",
     "CapabilityGuard",
+    "ConformanceError",
+    "ConformanceReport",
     "CycleError",
     "Decision",
     "DischargeRecord",
@@ -111,6 +120,7 @@ __all__ = [
     "Registry",
     "RegistryError",
     "Risk",
+    "ScenarioResult",
     "Scorecard",
     "UnknownCapabilityError",
     "UnknownControlError",
@@ -122,6 +132,7 @@ __all__ = [
     "WaiverRegister",
     "__version__",
     "audit_envelopes",
+    "check_source",
     "audit_obligations",
     "get_provider",
     "load_registry",
@@ -129,4 +140,5 @@ __all__ = [
     "providers_for",
     "record_decision",
     "run_provider",
+    "scenarios_for",
 ]

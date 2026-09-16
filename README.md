@@ -504,3 +504,50 @@ what every exit code means, how to tell *proven-and-stopped* from
 The short version: **a closed band is not an incident by default.** It means a
 control stopped being proven, which is the system working. It becomes an
 incident when a band something depends on closes and nobody notices.
+
+## Conformance — can this attestation source be trusted?
+
+The four provider rules have been enforced since v0.3, by a harness that only
+in-repo providers pass through. **The controls that matter most will not be
+written here**: GV-01, GV-03 and GV-08 are attested by the external assurance
+account, GV-02 and GV-06 by L0, GV-07 by BADF.
+
+```bash
+neuraxis conform --control GV-01 -- python examples/conforming_source.py
+#  PASS  live       rule 4 - emit an evidence reference, never a bare pass/fail
+#  PASS  broken     rule 1 - fail closed
+#  PASS  negative   rule 2 - positive control
+#  PASS  powerless  rule 3 - no vacuous probe
+#  exit 0
+
+neuraxis conform --control GV-01 -- python examples/vacuous_source.py
+#  FAIL on broken, negative and powerless.   exit 10
+```
+
+A source is an **executable**: one JSON object in on stdin, one JSON
+attestation out on stdout. Black box on purpose — the assurance account should
+not have to write Python to show its probe is honest. The contract is
+[`docs/CONFORMANCE.md`](docs/CONFORMANCE.md).
+
+| Scenario | The source should | Rule |
+|---|---|---|
+| `live` | run normally | emit a real evidence reference, not `"pass"` |
+| `broken` | run with a dependency unavailable | never report PASS |
+| `negative` | run against a condition it must reject | report FAIL — a source that cannot fail is not a check |
+| `powerless` | run as an identity with no authority | not pass; a check that answers the same for a powerful and a powerless identity is checking that the machine is switched on |
+
+**The kind comes from the registry, not the source.** `powerless` is required
+only for a control declared `kind: probe`. A source that could declare its own
+kind could declare its way out of the vacuity check, so the field lives in the
+kernel and defaults to `probe` — an omission tightens.
+
+**`examples/vacuous_source.py` is in the repository deliberately.** A
+conformance suite nobody has seen fail is itself an unverified check. It emits
+a well-formed attestation with a plausible reference, every time, for everyone,
+and it *passes* rule 4 — a source can satisfy the visible rule and none of the
+substantive ones.
+
+**What it does not prove.** Every scenario is implemented by the source, so
+conformance shows a source *can* fail, not that it fails when it should. It
+closes the case that actually happens: a check that was correct when written
+and has since stopped exercising anything, still reporting green.
