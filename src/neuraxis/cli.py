@@ -228,7 +228,7 @@ def cmd_attest(args: argparse.Namespace) -> int:
 
     if args.from_provider:
         try:
-            provider = get_provider(args.from_provider, log_path=args.task_log)
+            provider = get_provider(args.from_provider, log_path=args.task_log, gate_log_path=args.gate_log)
         except UnknownProviderError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return EXIT_ERROR
@@ -355,8 +355,8 @@ def cmd_contract(args: argparse.Namespace) -> int:
 def cmd_providers(args: argparse.Namespace) -> int:
     """Show provider coverage of the control set — a live dependency view."""
     registry = load_registry(args.registry)
-    cover = coverage(registry.controls, log_path=args.task_log)
-    instances = {p.name: p for p in providers_for(log_path=args.task_log)}
+    cover = coverage(registry.controls, log_path=args.task_log, gate_log_path=args.gate_log)
+    instances = {p.name: p for p in providers_for(log_path=args.task_log, gate_log_path=args.gate_log)}
 
     rows = ["CONTROL  PROVIDER                        STATE     WINDOW"]
     payload: dict[str, Any] = {"controls": {}}
@@ -398,7 +398,7 @@ def cmd_assure(args: argparse.Namespace) -> int:
     resolver = BandResolver(registry, store)
     before = set(resolver.attained_bands())
 
-    selected = providers_for(args.control, log_path=args.task_log)
+    selected = providers_for(args.control, log_path=args.task_log, gate_log_path=args.gate_log)
     if not selected:
         print(f"error: no providers for {args.control or 'any control'}", file=sys.stderr)
         return EXIT_ERROR
@@ -457,7 +457,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", action="store_true", help="emit JSON (the machine contract)")
     parser.add_argument(
         "--task-log", default="task-log.jsonl",
-        help="task log consumed by the verifier-independence provider",
+        help="task log consumed by the verifier-independence provider (GV-04)",
+    )
+    parser.add_argument(
+        "--gate-log", default="gate-log.jsonl", dest="gate_log",
+        help="BADF gate log consumed by the ratification provider (GV-07)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

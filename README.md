@@ -1,6 +1,6 @@
 # neuraxis
 
-**BST Neuraxis — Intelligent Loop Registry and Governance Gate.** Reference implementation of ILR-001. **v0.5.0.**
+**BST Neuraxis — Intelligent Loop Registry and Governance Gate.** Reference implementation of ILR-001. **v0.5.1.**
 
 Capability is licensed by the governance controls paired to it. A capability whose controls do not hold a current passing attestation is denied — mechanically, at the call site, not by instruction to an agent.
 
@@ -73,6 +73,9 @@ An attestation recorded by hand is an operator asserting something. A **provider
 neuraxis providers          # coverage of the control set
 neuraxis assure             # run every due provider, record, report band changes
 neuraxis assure --control GV-04 --force
+
+# Wired providers read evidence files; point them at yours
+neuraxis --task-log task-log.jsonl --gate-log gate-log.jsonl assure
 ```
 
 ```
@@ -80,8 +83,9 @@ CONTROL  PROVIDER                        STATE     WINDOW
 GV-01    kbs-001/probe                   UNWIRED   1d
                                          blocked on: KBS-001 T1 — kernel boundary probe
 GV-04    nx/verifier-independence        WIRED     7d
+GV-07    badf/gate-log                   WIRED     7d
 ...
-1 of 10 controls have a wired provider.
+2 of 10 controls have a wired provider.
 ```
 
 **UNWIRED is deliberate and visible.** A control whose real source does not exist yet is declared rather than omitted, so coverage is honest and `assure` refuses to attest it instead of skipping it quietly. The output doubles as a live view of the T-queue.
@@ -109,7 +113,15 @@ class MyProvider(Provider):
         return self.audit(self.real_source())
 ```
 
-`nx/verifier-independence` is the reference implementation: it audits a task log for `performer != verifier`, treats an empty or missing log as not-live rather than as a trivial pass, and its vacuity probe audits a synthetic self-verified record.
+### Wired providers
+
+**`nx/verifier-independence` (GV-04)** audits a task log for `performer != verifier`, treats an empty or missing log as not-live rather than as a trivial pass, and its vacuity probe audits a synthetic self-verified record.
+
+**`badf/gate-log` (GV-07)** audits the BADF gate log for genuine human ratification — *automation may propose, never merge.* Five breach classes: no ratifier, self-ratification, an automation ratifier, ratification that post-dates the merge, and ratification that pre-dates the proposal.
+
+The fourth is the one worth building for. The first three catch a missing or miswired gate; ratified-after-merge catches a **working** gate that has quietly become ceremonial — the failure that arrives under schedule pressure and looks green the whole way. The record contract is in `docs/GV-07-gate-log-contract.md`.
+
+> **A wired control with no source fails.** `neuraxis assure` exits non-zero when a provider's evidence file is absent, because a check that is not live has not passed. Supply `--task-log` and `--gate-log`, or scope the run with `--control`.
 
 ---
 
@@ -254,7 +266,7 @@ neuraxis attest --control GV-08 --result "$RESULT" \
 ## Honest limits
 
 - **This enforces at the call site, not at the credential.** A component that never calls the gate is not governed by it. Mechanical enforcement of the boundary itself is KBS-001's job (lease scope, kernel separation); Neuraxis assumes that boundary already holds.
-- **Nine of ten controls have no real provider yet.** `neuraxis providers` says which and why. Until they are wired, those controls can only be attested by hand — which is an assertion, not evidence.
+- **Eight of ten controls have no real provider yet.** `neuraxis providers` says which and why. Until they are wired, those controls can only be attested by hand — which is an assertion, not evidence.
 - **Attestations are as good as the checks that produce them.** The harness enforces the four rules mechanically, but it cannot tell whether a provider is auditing the right thing. It catches a check that cannot fail; it does not catch a check that measures the wrong property.
 - **The JSONL attestation file is a local mirror, not an audit trail.** Under KBS-001 the authoritative sink is WORM-backed. Do not treat this file as evidence of record.
 - **Band thresholds in the registry are a starting point**, not calibrated values. Set them from your own measurements.
@@ -267,7 +279,7 @@ neuraxis attest --control GV-08 --result "$RESULT" \
 python -m pytest -q --cov=neuraxis --cov-report=term-missing
 ```
 
-**Python:** 174 tests, 94% coverage. **JS client:** 19 contract tests. The suite includes explicit **positive controls** — `test_allows_when_everything_holds`, `test_ratified_non_delegable_capability_is_allowed`, `test_guard_decorator_runs_the_body_on_allow`. Without them, a gate that denied unconditionally would pass every other assertion in the suite. `tests/test_failclosed.py` asserts that faults become denials rather than implicit allows.
+**Python:** 196 tests, 94% coverage. **JS client:** 19 contract tests. The suite includes explicit **positive controls** — `test_allows_when_everything_holds`, `test_ratified_non_delegable_capability_is_allowed`, `test_guard_decorator_runs_the_body_on_allow`. Without them, a gate that denied unconditionally would pass every other assertion in the suite. `tests/test_failclosed.py` asserts that faults become denials rather than implicit allows.
 
 ---
 

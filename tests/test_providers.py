@@ -246,9 +246,16 @@ def test_every_control_has_a_declared_provider(registry):
     assert covered == set(registry.controls), "an undeclared control is an invisible gap"
 
 
-def test_exactly_one_provider_is_wired_today():
-    wired = [p for p in providers_for() if not isinstance(p, UnwiredProvider)]
-    assert [p.name for p in wired] == ["nx/verifier-independence"]
+def test_wired_providers_are_exactly_the_ones_with_a_real_source():
+    """Asserts the set, not a count — a count says nothing about which moved."""
+    wired = sorted(p.name for p in providers_for() if not isinstance(p, UnwiredProvider))
+    assert wired == ["badf/gate-log", "nx/verifier-independence"]
+
+
+def test_every_unwired_provider_names_a_blocker():
+    for provider in providers_for():
+        if isinstance(provider, UnwiredProvider):
+            assert provider.blocked_on, f"{provider.name} is unwired with no blocker named"
 
 
 def test_get_provider_by_name():

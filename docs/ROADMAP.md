@@ -1,6 +1,6 @@
 # neuraxis — Roadmap
 
-**Current:** v0.5.0 — gate core, per-control windows, provider harness, Node client. 174 Python tests + 19 JS contract tests.
+**Current:** v0.5.1 — gate core, per-control windows, provider harness, Node client, GV-07 wired. 196 Python tests + 19 JS contract tests.
 **To:** v1.0 (operational governance layer for BST-SA)
 **Governing constraint:** one task at a time, CI green = done.
 
@@ -8,7 +8,7 @@
 |---|---|
 | v0.1 gate core | **shipped** |
 | v0.2 per-control windows | **shipped** |
-| v0.3 provider harness | **shipped** — 1 of 10 controls wired |
+| v0.3 provider harness | **shipped** — 2 of 10 controls wired |
 | v0.3.1 Windows portability | **shipped** |
 | v0.4 loop contracts | blocked on T3/T4 |
 | v0.5 maw-js client | **shipped** |
@@ -57,7 +57,7 @@ Two tests had to be retargeted: both assumed a 24h window for GV-04, which now c
 
 ---
 
-## v0.3 — Attestation providers — SHIPPED (harness + 1 of 10 wired)
+## v0.3 — Attestation providers — SHIPPED (harness + 2 of 10 wired)
 
 **Why:** today attestations are recorded by hand with `neuraxis attest`. An operator typing `--result pass` is an assertion, not evidence. Until providers exist, the gate is well-built theatre.
 
@@ -89,13 +89,17 @@ One provider per control, each a script that fails closed and emits an attestati
 - [x] `neuraxis attest --from-provider <name>` replaces manual `--result`
 - [x] `neuraxis providers` and `neuraxis assure`
 - [x] `nx/verifier-independence` wired (GV-04)
+- [x] `badf/gate-log` wired (GV-07) — five breach classes, record contract in `docs/GV-07-gate-log-contract.md`
 - [ ] GV-01/02/03/08 wired — **blocked on KBS-001 T1**
 - [ ] GV-06 wired — **blocked on L0 scope/budget ceilings**
-- [ ] GV-07 wired — **blocked on BADF gate-log export**
+- [ ] GV-05/09 wired — **blocked on neuraxis v0.4**
+- [ ] GV-10 wired — **blocked on KBS-001 E-13**
 
-The nine unwired controls are declared as `UnwiredProvider` rather than omitted, each naming its blocker. `neuraxis providers` therefore reads as a live dependency view, and `assure` refuses to attest them rather than skipping them quietly.
+The eight unwired controls are declared as `UnwiredProvider` rather than omitted, each naming its blocker. `neuraxis providers` therefore reads as a live dependency view, and `assure` refuses to attest them rather than skipping them quietly.
 
-**Next wire-up, in order of least blockage:** GV-07 (BADF gate log — an export you already produce), then GV-02 and GV-06 (L0), then the four KBS-001 ones.
+**Next wire-up, in order of least blockage:** GV-02 and GV-06 (L0 lease log and scope/budget ceilings — both need the L0 layer, neither needs T1), then GV-05 and GV-09 with neuraxis v0.4, then the four that wait on KBS-001.
+
+GV-07 required no new infrastructure — only a stated record contract, which the control specifies rather than inherits from whatever the export happened to emit.
 
 ---
 

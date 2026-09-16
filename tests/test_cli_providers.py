@@ -54,8 +54,9 @@ def test_providers_lists_every_control(capsys, registry):
 def test_providers_reports_wired_count_and_blockers(capsys):
     code, out = _run(["--json", "providers"], capsys)
     payload = json.loads(out.out)
-    assert payload["wired"] == 1
+    assert payload["wired"] == 2
     assert payload["controls"]["GV-04"]["state"] == "wired"
+    assert payload["controls"]["GV-07"]["state"] == "wired"
     assert payload["controls"]["GV-01"]["state"] == "unwired"
     assert "KBS-001" in payload["controls"]["GV-01"]["blocked_on"]
 
@@ -75,9 +76,15 @@ def test_assure_records_results_and_reports_unwired(tmp_path, clean_log, capsys)
         ["--json", "--attestations", str(store), "--task-log", str(clean_log), "assure"], capsys
     )
     payload = json.loads(out.out)
-    assert code == 0
-    assert payload["failed"] == []
-    assert len(payload["unwired"]) == 9
+    # Non-zero: GV-07 is wired but its gate log was not supplied, so it fails.
+    # A wired control with an absent source is a control that does not hold —
+    # treating it as a skip would be the vacuous pass the harness exists to stop.
+    assert code == 10
+    # GV-07 fails rather than passing: no gate log is supplied here, so its
+    # positive control does not hold. That is the correct outcome — a check
+    # with no source is not a check that passed.
+    assert payload["failed"] == ["GV-07"]
+    assert len(payload["unwired"]) == 8
     assert store.is_file()
 
 
