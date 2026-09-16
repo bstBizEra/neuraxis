@@ -1,6 +1,6 @@
 # neuraxis — Roadmap
 
-**Current:** v0.10.0 - the kernel drift check is a control, not an artifact. 4 of 10 controls wired, on an unauthenticated substrate until T1. 516 Python tests + 19 JS contract tests.
+**Current:** v0.11.0 - every v1.0 item shipped, and deliberately not tagged v1.0 while zero bands are attainable. 4 of 10 controls wired, on an unauthenticated substrate until T1. 560 Python tests + 19 JS contract tests.
 **To:** v1.0 (operational governance layer for BST-SA)
 **Governing constraint:** one task at a time, CI green = done.
 
@@ -17,7 +17,8 @@
 | v0.9.0 bounded self-tuning (D-01) | **shipped** |
 | v0.10.0 drift check + operator runbook | **shipped** |
 | v0.6 service mode | not until a caller needs it |
-| v1.0 hardening | **partially shipped as v0.6.0** — review done, fixable findings closed, structural limits documented |
+| v0.11.0 conformance suite | **shipped** |
+| v1.0 hardening | **all four items shipped** (v0.6.0 review, threat model, v0.10.0 runbook, v0.11.0 conformance suite). **Deliberately not tagged v1.0** while zero bands are attainable — see the v1.0 section |
 
 ---
 
@@ -121,7 +122,7 @@ The Execution → Learning boundary (ILR-001 §6.5), which is what makes GV-03 a
 **The critical piece:** a kernel-side promoter that *recomputes* confirmation count, decay and assumption validity from raw evidence, and is the sole identity that can mark a lesson canonical. A mutable promoter that merely asserts criteria were met defeats K-04 entirely (ILR-001 §4.5).
 
 **Acceptance**
-- [ ] Obligations on an ALLOW are discharged or the record is marked incomplete
+- [x] Obligations on an ALLOW are discharged or the record is marked incomplete — **met by v0.7.0**, and this box was left unticked for three releases. `record_decision` refuses to issue an ALLOW owing EMIT_EVIDENCE that could not be written, and `audit_obligations` reports what is owed, what is paid, and a FAULT when the performer discharged its own. An unticked box that is actually done misrepresents state exactly as a stale dashboard does
 - [ ] A lesson without traceable evidence IDs cannot reach canonical
 - [ ] Promoter recomputation tested against hand-computed fixtures
 - [ ] Weakness Signal rejects single-episode inputs
@@ -164,10 +165,18 @@ Only if MCP Hub or a non-shell caller needs it. FastAPI wrapper over the same co
 
 ## v1.0 — Hardening
 
-- Adversarial review of Neuraxis itself, in the style of the KBS-001 pass: what bypasses the gate, what makes a check vacuous, what fails open
-- Threat model written down explicitly (currently implicit in the fail-closed tests)
-- Attestation source conformance suite
-- Operator runbook: what to do when a band closes at 02:00
+- [x] Adversarial review of Neuraxis itself, in the style of the KBS-001 pass — **three of them**: v0.6.0 (9 findings), v0.8.0 (11), v0.9.0 (15). All 35 reproduced by execution before being fixed
+- [x] Threat model written down explicitly — `docs/THREAT-MODEL.md`, shipped between v0.9.0 and v0.10.0
+- [x] Attestation source conformance suite — **v0.11.0**, `docs/CONFORMANCE.md` and `neuraxis conform`
+- [x] Operator runbook: what to do when a band closes at 02:00 — `docs/RUNBOOK.md`, v0.10.0
+
+**All four are shipped, and this is still not v1.0.** The version stays on the
+0.x track because a 1.0 would be read as a claim about the system, and the
+system currently attains zero bands. Declaring 1.0 on a package where every
+band is closed and six of ten controls have no provider is the ordinal
+attainment claim D-02 prohibits, wearing different clothes. v1.0 is earned when
+T1 lands and a band can actually open — not when the package's own checklist
+runs out.
 
 **The question v1.0 must answer:** *what is the cheapest way for an agent to obtain an ALLOW it should not have?* Today the honest answer is "not call the gate at all" — which is KBS-001's problem, not Neuraxis's, but v1.0 should state where the seam is rather than leave it implied.
 
@@ -507,3 +516,80 @@ evidence forever.
 - [x] Every unreadable expectation exits 2, and none of them exits 0
 - [x] A release-format `REGISTRY-DIGEST.txt`, a bare digest, and a BOM-prefixed file all parse
 - [x] `drift` refuses to report on a registry that does not load
+
+---
+
+## v0.11.0 - Attestation source conformance - SHIPPED
+
+The last unshipped v1.0 item, and the one piece of it that is T1 preparation
+rather than package polish.
+
+The four provider rules have been enforced since v0.3 by a harness that only
+in-repo providers pass through. **The controls that matter most will not be
+written here**: GV-01, GV-03 and GV-08 are attested by the external assurance
+account, GV-02 and GV-06 by L0, GV-07 by BADF. None of them had a way to show
+conformance before being trusted, which is how a programme ends up having
+trusted an attestation source nobody tested - and a broken source is worse than
+a missing one, because the missing one leaves the band closed while the broken
+one reports it open.
+
+| Piece | Detail |
+|---|---|
+| `neuraxis conform --control GV-nn -- <cmd>` | drives a source through its scenarios; exit 0 conforms, 10 does not, 2 cannot run |
+| The contract | one JSON object in on stdin, one JSON attestation out on stdout |
+| Scenarios | `live`, `broken`, `negative`, `powerless` - one per rule |
+| `kind: probe \| audit` | registry-declared, on every control |
+| `examples/conforming_source.py` | the reference implementation, to copy |
+| `examples/vacuous_source.py` | the counter-example, kept on purpose |
+| `docs/CONFORMANCE.md` | the contract, for whoever writes the source |
+
+**Black box on purpose.** The assurance account should not have to write Python
+to show its probe is honest, so a source is an executable and the suite drives
+it from outside.
+
+**The kind comes from the kernel.** A source that could declare its own kind
+could declare its way out of the vacuity check - the finding class this package
+has rediscovered most often - so `kind` is a registry field, and it defaults to
+`probe`, so an omission tightens.
+
+**The counter-example is in the repository deliberately.** A conformance suite
+nobody has seen fail is itself an unverified check. `vacuous_source.py` emits a
+well-formed attestation with a plausible evidence reference, every time, for
+everyone, and the suite fails it on three rules while it *passes* rule 4 - a
+source can satisfy the visible rule and none of the substantive ones.
+
+**One bug found in the writing, and it was mine.** The CLI took the source as a
+command line and split it with `shlex`, which treats a backslash as an escape -
+so on Windows every source path silently became a different path and reported
+as *missing* rather than as *failing*. A conformance suite that cannot run a
+source on half its target platforms is worse than none. The command is now argv
+after `--`, and a string is refused rather than guessed at.
+
+**What it does not prove**, stated in the doc and in the tool's own output:
+every scenario is implemented by the source, so conformance shows a source
+*can* fail, not that it fails when it should. It closes the case that actually
+happens - a check that was correct when written and has since stopped
+exercising anything, still reporting green.
+
+### Acceptance audit
+
+All nine unticked acceptance boxes were re-read. **One was stale**: v0.4's
+*"obligations on an ALLOW are discharged or the record is marked incomplete"*
+was met by v0.7.0 and sat unticked for three releases. An unticked box that is
+actually done misrepresents state exactly as a stale dashboard does, which this
+roadmap rules out by name.
+
+The other eight are genuinely blocked, and now say what by: T1 (GV-01/03/08),
+T3/T4 (the three lesson boxes), E-13 (GV-10), the L0 lease API, and one
+workstream that has to be nominated.
+
+### And why this is not v1.0
+
+All four v1.0 items are shipped. The version stays on the 0.x track anyway,
+because **a 1.0 is read as a claim about the system, and the system attains
+zero bands.** Six of ten controls have no provider and four of those wait on
+T1. Declaring 1.0 here would be the ordinal attainment claim D-02 prohibits,
+wearing different clothes.
+
+v1.0 is earned when a band can actually open - not when the package's own
+checklist runs out.

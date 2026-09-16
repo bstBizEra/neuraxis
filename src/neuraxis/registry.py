@@ -147,6 +147,26 @@ def _require(data: Mapping[str, Any], key: str, where: str) -> Any:
     return data[key]
 
 
+_CONTROL_KINDS = ("probe", "audit")
+
+
+def _control_kind(data: Mapping[str, Any], where: str) -> str:
+    """`probe` or `audit`, defaulting to the stricter one.
+
+    A probe carries the vacuity scenario in the conformance suite; an audit of
+    a log legitimately answers the same whoever asks, so it does not. Omission
+    yields `probe`, because the default of a field that selects how hard a
+    check is must be the harder one -- the permissive-by-omission class is the
+    one this package has found most often.
+    """
+    value = data.get("kind", "probe")
+    if not isinstance(value, str) or value.strip().lower() not in _CONTROL_KINDS:
+        raise RegistryError(
+            f"{where}: 'kind' must be one of {', '.join(_CONTROL_KINDS)}, got {value!r}"
+        )
+    return value.strip().lower()
+
+
 def _flag(data: Mapping[str, Any], key: str, where: str) -> bool:
     """A boolean that must be written as one.
 
@@ -190,6 +210,7 @@ def load_registry(path: str | Path | None = None) -> Registry:
             max_age=(
                 parse_duration(body["max_age"]) if "max_age" in body else default_max_age
             ),
+            kind=_control_kind(body, cid),
         )
         for cid, body in _require(raw, "governance", "root").items()
     }

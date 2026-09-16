@@ -27,6 +27,7 @@ from typing import Any, Sequence
 
 from . import __version__
 from .attestation import AttestationStore
+from .conformance import check_source
 from .errors import NeuraxisError
 from .envelope import Envelope, EnvelopeRegister
 from .evidence import (
@@ -308,6 +309,55 @@ def cmd_drift(args: argparse.Namespace) -> int:
     if matches is False:
         return EXIT_BY_DECISION[Decision.DENY]
     return EXIT_OK
+
+
+def cmd_conform(args: argparse.Namespace) -> int:
+    """Can this attestation source be trusted to attest this control?
+
+    Black box on purpose. The controls that matter most will be attested by
+    sources written outside this repository -- GV-08's probe by the external
+    assurance account, GV-02's and GV-06's by L0, GV-07's by BADF -- and none
+    of their authors should have to write Python to show their source is
+    honest.
+    """
+    registry = load_registry(args.registry)
+    control = registry.controls.get(args.control)
+    if control is None:
+        print(f"error: unknown control {args.control}", file=sys.stderr)
+        return EXIT_ERROR
+
+    report = check_source(
+        args.source, control.id, kind=control.kind, timeout=float(args.timeout)
+    )
+
+    lines = [
+        f"source:  {report.source}",
+        f"control: {control.id} {control.name} (kind: {control.kind}, "
+        f"declared by the registry)",
+        "",
+    ]
+    for r in report.results:
+        lines.append(f"{'PASS' if r.ok else 'FAIL'}  {r.scenario:<10} {r.rule}")
+        lines.append(f"          {r.detail}")
+    for w in report.warnings:
+        lines.append("")
+        lines.append(f"NOTE: {w}")
+    lines.append("")
+    if report.conforms:
+        lines.append(
+            f"{control.id}: this source conforms. That means it can fail, it fails closed, "
+            "and it emits a reference -- not that it fails when it should. Every scenario is "
+            "implemented by the source itself."
+        )
+    else:
+        lines.append(
+            f"{control.id}: this source DOES NOT conform "
+            f"({', '.join(r.scenario for r in report.failures)}). "
+            "Do not accept attestations from it."
+        )
+
+    _emit(report.to_dict(), as_json=args.json, text="\n".join(lines))
+    return EXIT_OK if report.conforms else EXIT_BY_DECISION[Decision.DENY]
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -1009,6 +1059,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="a REGISTRY-DIGEST.txt from the release you believe you are running",
     )
     p.set_defaults(func=cmd_drift)
+
+    p = sub.add_parser(
+        "conform", help="can this attestation source be trusted to attest this control?"
+    )
+    p.add_argument("--control", required=True, help="GV-nn; its kind comes from the registry")
+    p.add_argument("--timeout", default=30.0, type=float, help="seconds per scenario")
+    p.add_argument(
+        "source", nargs="+",
+        help="the source command and its arguments, after `--`. Given as argv rather "
+             "than a command line, because splitting one is platform-specific and a "
+             "Windows path would lose its backslashes",
+    )
+    p.set_defaults(func=cmd_conform)
 
     p = sub.add_parser("status", help="band attainment against current attestations")
     p.set_defaults(func=cmd_status)

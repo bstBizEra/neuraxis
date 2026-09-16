@@ -8,17 +8,25 @@ principle: governed-evolution
 # enforcement.attestation_max_age when omitted. Windows are set by the cost of
 # the check, not by uniformity: demanding daily proof of an expensive drill
 # guarantees the drill gets stubbed, and a stubbed drill is a vacuous check.
+#
+# `kind` selects how hard the conformance suite is on a source for this
+# control. A `probe` (or a drill) must additionally show it answers differently
+# for a powerless identity; an `audit` of a log legitimately answers the same
+# whoever asks, so it is not asked to. The kind is declared here, in the
+# kernel, precisely so a source cannot declare its way out of the vacuity
+# check -- and it defaults to `probe`, so an omission tightens rather than
+# relaxes.
 governance:
-  GV-01: { name: identity,      attestation: kbs-001/probe,             max_age: 24h }
-  GV-02: { name: authority,     attestation: l0/lease-audit,            max_age: 24h }
-  GV-03: { name: evidence,      attestation: kbs-001/sink-worm,         max_age: 24h }
-  GV-04: { name: verification,  attestation: nx/verifier-independence,  max_age: 7d }
-  GV-05: { name: reversibility, attestation: nx/rollback-drill,         max_age: 30d }
-  GV-06: { name: containment,   attestation: l0/scope-budget,           max_age: 7d }
-  GV-07: { name: ratification,  attestation: badf/gate-log,             max_age: 7d }
-  GV-08: { name: attestation,   attestation: kbs-001/external-probe,    max_age: 24h }
-  GV-09: { name: provenance,    attestation: nx/lesson-provenance,      max_age: 7d }
-  GV-10: { name: kill-switch,   attestation: nx/killswitch-drill,       max_age: 30d }
+  GV-01: { name: identity,      attestation: kbs-001/probe,             max_age: 24h, kind: probe }
+  GV-02: { name: authority,     attestation: l0/lease-audit,            max_age: 24h, kind: audit }
+  GV-03: { name: evidence,      attestation: kbs-001/sink-worm,         max_age: 24h, kind: probe }
+  GV-04: { name: verification,  attestation: nx/verifier-independence,  max_age: 7d,  kind: audit }
+  GV-05: { name: reversibility, attestation: nx/rollback-drill,         max_age: 30d, kind: probe }
+  GV-06: { name: containment,   attestation: l0/scope-budget,           max_age: 7d,  kind: audit }
+  GV-07: { name: ratification,  attestation: badf/gate-log,             max_age: 7d,  kind: audit }
+  GV-08: { name: attestation,   attestation: kbs-001/external-probe,    max_age: 24h, kind: probe }
+  GV-09: { name: provenance,    attestation: nx/lesson-provenance,      max_age: 7d,  kind: audit }
+  GV-10: { name: kill-switch,   attestation: nx/killswitch-drill,       max_age: 30d, kind: probe }
 
 capabilities:
   IL-01: { name: Thinkable,          band: BAND-A, question: "What does this situation mean?" }
