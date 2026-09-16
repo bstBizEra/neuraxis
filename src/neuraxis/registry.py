@@ -16,6 +16,7 @@ from typing import Any, Mapping
 import yaml
 
 from .errors import CycleError, RegistryError, UnknownCapabilityError, UnknownControlError
+from .envelope import EnvelopePolicy, MAX_ENVELOPE_TTL_CEILING
 from .model import Band, Capability, GVControl, Risk
 from .waiver import WaiverPolicy
 
@@ -54,6 +55,7 @@ class Registry:
     enforcement_mode: str
     thresholds: Mapping[str, Mapping[str, float]]
     waiver_policy: WaiverPolicy = field(default_factory=WaiverPolicy)
+    envelope_policy: EnvelopePolicy = field(default_factory=EnvelopePolicy)
 
     # ---- lookups -------------------------------------------------------
 
@@ -121,6 +123,21 @@ def _require(data: Mapping[str, Any], key: str, where: str) -> Any:
     return data[key]
 
 
+def _flag(data: Mapping[str, Any], key: str, where: str) -> bool:
+    """A boolean that must be written as one.
+
+    `envelope_bounded: "no"` is a non-empty string and therefore truthy, which
+    would silently bound a capability the author meant to leave free -- or, one
+    typo later, free a capability the author meant to bound.
+    """
+    value = data.get(key, False)
+    if not isinstance(value, bool):
+        raise RegistryError(
+            f"{where}: {key!r} must be a YAML boolean, got {type(value).__name__} ({value!r})"
+        )
+    return value
+
+
 def load_registry(path: str | Path | None = None) -> Registry:
     """Load and fully validate a registry file.
 
@@ -161,6 +178,7 @@ def load_registry(path: str | Path | None = None) -> Registry:
             name=_require(body, "name", cid),
             band=_require(body, "band", cid),
             question=_require(body, "question", cid),
+            envelope_bounded=_flag(body, "envelope_bounded", cid),
         )
         for cid, body in _require(raw, "capabilities", "root").items()
     }
@@ -241,6 +259,10 @@ def load_registry(path: str | Path | None = None) -> Registry:
             raise RegistryError(f"scorecard threshold references undefined band {bid}")
 
     waiver_policy = _waiver_policy(enforcement.get("waivers", {}) or {}, controls)
+    envelope_policy = _envelope_policy(
+        enforcement.get("envelopes", {}) or {}, authority.get("envelope_signers", ()) or ()
+    )
+    _assert_envelope_floor(capabilities, authority.get("envelope_required", ()) or ())
 
     return Registry(
         framework=str(_require(raw, "framework", "root")),
@@ -257,7 +279,35 @@ def load_registry(path: str | Path | None = None) -> Registry:
         enforcement_mode=str(enforcement.get("mode", "l0-mechanical")),
         thresholds=thresholds,
         waiver_policy=waiver_policy,
+        envelope_policy=envelope_policy,
     )
+
+
+def _envelope_policy(raw: Mapping[str, Any], signers: Any) -> EnvelopePolicy:
+    """Bounds on the envelope path (ILR-001-DR D-01).
+
+    `envelope_signers` is the set of principals permitted to declare an
+    envelope. Leaving it out means any principal other than the one bounded may
+    sign, which `neuraxis validate` reports as a warning rather than accepting
+    silently: an unrestricted signer set is the weakest form the control takes,
+    and it should be a decision rather than an omission.
+    """
+    if not isinstance(raw, Mapping):
+        raise RegistryError("enforcement.envelopes must be a mapping")
+    if isinstance(signers, (str, bytes)) or not isinstance(signers, (list, tuple)):
+        raise RegistryError("authority.envelope_signers must be a list of principal names")
+    for entry in signers:
+        if not isinstance(entry, str) or not entry.strip():
+            raise RegistryError(
+                f"authority.envelope_signers entry {entry!r} is not a principal name"
+            )
+    named = frozenset(s.strip() for s in signers if s.strip())
+    max_ttl = parse_duration(raw.get("max_ttl", "90d"))
+    if max_ttl > MAX_ENVELOPE_TTL_CEILING:
+        # Clamped rather than rejected, for the same reason the waiver bounds
+        # are: a registry may tighten the ceiling and may not raise it.
+        max_ttl = MAX_ENVELOPE_TTL_CEILING
+    return EnvelopePolicy(signers=named, max_ttl=max_ttl)
 
 
 def _waiver_policy(raw: Mapping[str, Any], controls: Mapping[str, GVControl]) -> WaiverPolicy:
@@ -321,6 +371,32 @@ def _assert_monotonic(bands: Mapping[str, Band]) -> None:
                     "Gate must be a monotonic staircase; a band that relaxes a control "
                     "its prerequisite demands is an incentive to claim it"
                 )
+
+
+def _assert_envelope_floor(
+    capabilities: Mapping[str, Capability], required: Any
+) -> None:
+    """Every capability in `authority.envelope_required` must be envelope-bounded.
+
+    `envelope_bounded` defaults to False, so deleting one token from a
+    capability line would silently turn IL-13a into unbounded self-tuning from
+    Band C -- the exact outcome ILR-001-DR D-01 exists to prevent, arriving by
+    omission rather than by argument. Naming the requirement in a second place
+    means the two must agree or the registry does not load, which is how the
+    non-delegable floor already works.
+    """
+    if isinstance(required, (str, bytes)) or not isinstance(required, (list, tuple)):
+        raise RegistryError("authority.envelope_required must be a list of capability ids")
+    for cid in required:
+        cap = capabilities.get(str(cid).strip())
+        if cap is None:
+            raise RegistryError(f"envelope_required references undefined capability {cid}")
+        if not cap.envelope_bounded:
+            raise RegistryError(
+                f"{cap.id} is listed in authority.envelope_required but does not set "
+                "envelope_bounded: true. A capability the gate does not check is not "
+                "bounded, whatever the register says about it"
+            )
 
 
 def _assert_single_root(bands: Mapping[str, Band]) -> None:

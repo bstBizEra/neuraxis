@@ -23,11 +23,12 @@ from __future__ import annotations
 
 import json
 import secrets
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterable, Iterator, Mapping
 
+from .envelope import OUT_OF_ENVELOPE
 from .errors import NeuraxisError
 from .model import AuthorityRequest, Obligation, Verdict, now_utc
 
@@ -69,6 +70,11 @@ class EvidenceRecord:
     intent: str
     obligations: tuple[str, ...]
     reasons: tuple[str, ...]
+    # ILR-001-DR D-01. Carried so an adjustment is auditable against the bound
+    # it claimed, and so out-of-envelope denials can be counted per envelope
+    # without parsing prose.
+    envelope_ref: str | None = None
+    adjustments: Mapping[str, float] = field(default_factory=dict)
 
     @classmethod
     def build(
@@ -87,6 +93,8 @@ class EvidenceRecord:
             intent=request.intent,
             obligations=tuple(o.value for o in verdict.obligations),
             reasons=tuple(verdict.reasons),
+            envelope_ref=request.envelope_ref,
+            adjustments=dict(request.adjustments),
         )
 
     @property
@@ -108,6 +116,8 @@ class EvidenceRecord:
             "intent": self.intent,
             "obligations": list(self.obligations),
             "reasons": list(self.reasons),
+            "envelope_ref": self.envelope_ref,
+            "adjustments": dict(self.adjustments),
         }
 
 
@@ -215,6 +225,126 @@ class ObligationAudit:
             "faults": list(self.faults),
             "clean": self.clean,
         }
+
+
+@dataclass(frozen=True)
+class EnvelopeAudit:
+    """Out-of-envelope denials over a window, per envelope (ILR-001-DR D-01).
+
+    The register's reversal trigger is "two or more out-of-envelope denials
+    overridden by waiver within any 90-day window", and the second half of that
+    cannot be implemented faithfully: Neuraxis waives *controls*, not
+    individual denials, and no per-request override path exists -- deliberately,
+    since one would be exactly the loophole D-01 warns the split could become.
+
+    So what is counted is the half that is real and still diagnostic: repeated
+    out-of-envelope denials against the same envelope. Two or more means either
+    the envelope is mis-specified or the split is being leaned on, which is the
+    condition the trigger was written to surface. It is reported as an
+    observation about the envelope, never as an authorisation to widen it.
+    """
+
+    window: timedelta
+    denials: Mapping[str, int]
+    armed: tuple[str, ...]
+    #: The count at which a trigger arms. Carried because for a reversal
+    #: trigger the threshold *is* the finding: a clean report produced by a
+    #: raised threshold must not be indistinguishable from a clean sink.
+    threshold: int = 2
+    #: Records the audit could not read. A sink the audited party can also
+    #: write can be made unreadable by appending one malformed line, so a
+    #: fault is reported as not-clean rather than raised past the caller.
+    faults: tuple[str, ...] = ()
+
+    @property
+    def clean(self) -> bool:
+        return not self.armed and not self.faults
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "window_days": self.window.days,
+            "threshold": self.threshold,
+            "denials": dict(sorted(self.denials.items())),
+            "armed": list(self.armed),
+            "faults": list(self.faults),
+            "clean": self.clean,
+        }
+
+
+def audit_envelopes(
+    records: Iterable[dict[str, Any]],
+    *,
+    window: timedelta = timedelta(days=90),
+    threshold: int = 2,
+    at: datetime | None = None,
+) -> EnvelopeAudit:
+    """Count out-of-envelope denials per envelope inside `window`."""
+    at = at or now_utc()
+    cutoff = at - window
+    counts: dict[str, int] = {}
+    faults: list[str] = []
+    for row in _tolerant(records, faults):
+        if not isinstance(row, dict) or row.get("record") != EVIDENCE:
+            continue
+        if row.get("decision") == "ALLOW":
+            continue
+        ref = row.get("envelope_ref")
+        if not isinstance(ref, str) or not ref.strip():
+            continue
+        reasons = row.get("reasons")
+        if not isinstance(reasons, list):
+            continue
+        if not any(isinstance(r, str) and r.startswith(OUT_OF_ENVELOPE) for r in reasons):
+            continue
+        try:
+            when = datetime.fromisoformat(str(row.get("at")))
+        except (TypeError, ValueError):
+            when = None
+        if when is None or when.tzinfo is None:
+            # An unparseable or naive timestamp is counted, not dropped. The
+            # window is a reporting convenience; silently discarding a denial
+            # because its clock is unreadable would make the trigger easier to
+            # avoid than to satisfy, and dropping the offset is one edit.
+            counts[ref.strip()] = counts.get(ref.strip(), 0) + 1
+            continue
+        if when < cutoff:
+            continue
+        counts[ref.strip()] = counts.get(ref.strip(), 0) + 1
+
+    armed = tuple(
+        f"D-01: {ref} has {n} out-of-envelope denials in {window.days}d "
+        f"(threshold {threshold}). Either the envelope is mis-specified or the "
+        "IL-13a split is being leaned on; re-declare the bound deliberately "
+        "rather than widening it under pressure"
+        for ref, n in sorted(counts.items())
+        if n >= threshold
+    )
+    return EnvelopeAudit(
+        window=window,
+        denials=counts,
+        armed=armed,
+        threshold=threshold,
+        faults=tuple(faults),
+    )
+
+
+def _tolerant(records: Iterable[dict[str, Any]], faults: list[str]) -> Iterator[dict[str, Any]]:
+    """Yield records, converting a reader error into a fault rather than a raise.
+
+    `EvidenceSink.read()` raises on the first malformed line, which is right for
+    a loader and wrong for an audit: the sink is a file the audited party can
+    also write, so one appended `{` would otherwise abort every subsequent audit
+    run instead of reporting an armed trigger.
+    """
+    iterator = iter(records)
+    while True:
+        try:
+            yield next(iterator)
+        except StopIteration:
+            return
+        except NeuraxisError as exc:
+            faults.append(f"the evidence sink could not be read past this point: {exc}")
+            return
 
 
 def audit_obligations(

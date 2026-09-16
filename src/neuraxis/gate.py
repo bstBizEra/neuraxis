@@ -19,9 +19,11 @@ from __future__ import annotations
 from datetime import datetime
 
 from .attestation import AttestationStore
+from .envelope import OUT_OF_ENVELOPE, EnvelopeRegister, scope_fault
 from .errors import NeuraxisError, UnknownCapabilityError
 from .model import (
     AuthorityRequest,
+    Capability,
     Decision,
     Obligation,
     Risk,
@@ -53,11 +55,18 @@ class GovernanceGate:
         registry: Registry,
         attestations: AttestationStore,
         waivers: WaiverRegister | None = None,
+        envelopes: EnvelopeRegister | None = None,
     ) -> None:
         self.registry = registry
         self.attestations = attestations
         self.waivers = waivers if waivers is not None else WaiverRegister.empty(
             registry.waiver_policy
+        )
+        # An absent register is an empty one, not an absent check: an
+        # envelope-bounded capability with no envelope on file is denied, which
+        # is the correct reading of "declared in advance".
+        self.envelopes = envelopes if envelopes is not None else EnvelopeRegister.empty(
+            registry.envelope_policy
         )
         self.resolver = BandResolver(registry, attestations, self.waivers)
 
@@ -137,6 +146,13 @@ class GovernanceGate:
         # what an exception path is for.
         obligations = self._obligations(band.requires)
 
+        # --- Scope: an envelope-bounded capability must name a declared bound
+        # and stay inside it (ILR-001-DR D-01).
+        if capability.envelope_bounded:
+            verdict = self._check_envelope(request, capability, band_id, obligations, at)
+            if verdict is not None:
+                return verdict
+
         # --- Evidence requirement: obligations the request must already satisfy.
         if Obligation.INDEPENDENT_VERIFICATION in obligations:
             verdict = self._check_verifier_independence(request, capability.id, band_id)
@@ -204,6 +220,12 @@ class GovernanceGate:
                 "conditional authority: at least one control is unproven and lapses "
                 "with the waiver",
             ]
+        if capability.envelope_bounded and request.envelope_ref:
+            reasons.append(
+                f"bounded by envelope {request.envelope_ref} "
+                f"(scope {request.scope}; "
+                f"{len(request.adjustments)} adjustment(s) inside the declared limits)"
+            )
         return Verdict(
             decision=Decision.ALLOW,
             capability=capability.id,
@@ -214,6 +236,142 @@ class GovernanceGate:
         )
 
     # ---- helpers -------------------------------------------------------
+
+    def _check_envelope(
+        self,
+        request: AuthorityRequest,
+        capability: Capability,
+        band_id: str,
+        obligations: tuple[Obligation, ...],
+        at: datetime,
+    ) -> Verdict | None:
+        """ILR-001-DR D-01. Returns a DENY verdict, or None if the bound holds.
+
+        Every denial here is fail-closed and specific. The specificity is the
+        point: "your envelope expired" and "this parameter is not one your
+        envelope declares" are different problems, and a denial that cannot
+        tell them apart gets resolved by declaring a wider envelope.
+        """
+        ref = (request.envelope_ref or "").strip()
+        if not ref:
+            return self._deny(
+                capability.id,
+                band_id,
+                [
+                    f"{capability.id} is envelope-bounded and the request names no envelope",
+                    "D-01: an adjustment with no bound declared in advance is IL-13b, "
+                    "which belongs to BAND-G",
+                ],
+            )
+
+        # Every denial below opens with OUT_OF_ENVELOPE, including the ones that
+        # are not strictly a boundary breach. An expired envelope being hammered
+        # is the split being leaned on just as much as an out-of-range value is,
+        # and the D-01 trigger counts what it can see.
+        envelope = self.envelopes.get(ref)
+        if envelope is None:
+            return self._deny(
+                capability.id,
+                band_id,
+                [
+                    f"{OUT_OF_ENVELOPE}: envelope {ref!r} is not on file; an undeclared "
+                    "bound is not a bound"
+                ],
+            )
+        if not envelope.is_active(at):
+            return self._deny(
+                capability.id,
+                band_id,
+                [
+                    f"{OUT_OF_ENVELOPE}: envelope {envelope.id} is not active at "
+                    f"{at.isoformat()} (declared {envelope.issued_at.isoformat()}, "
+                    f"expires {envelope.expires_at.isoformat()})",
+                ],
+            )
+        # Re-checked at use, not only at load. A register built with the default
+        # policy and handed to a gate whose registry tightened the ceiling or
+        # named its signers would otherwise carry envelopes that registry would
+        # have refused -- one wrong constructor call, silently, forever.
+        fault = self.envelopes.policy_fault(envelope)
+        if fault is not None or not self.registry.envelope_policy.signer_permitted(
+            envelope.signed_by
+        ):
+            return self._deny(
+                capability.id,
+                band_id,
+                [
+                    f"{OUT_OF_ENVELOPE}: envelope {envelope.id} breaches this registry's "
+                    f"envelope policy: {fault or 'signer not on the declared allowlist'}"
+                ],
+            )
+        if envelope.capability != capability.id:
+            return self._deny(
+                capability.id,
+                band_id,
+                [
+                    f"{OUT_OF_ENVELOPE}: envelope {envelope.id} bounds "
+                    f"{envelope.capability}, not {capability.id}; an envelope is not "
+                    "transferable between capabilities"
+                ],
+            )
+        if not all(envelope.bounds(i) for i in request.claimed_identities):
+            # EVERY claimed identity, not any. `performer` is requester-supplied,
+            # so `any` would let a caller unlock someone else's envelope by
+            # naming them as performer -- and an adjustment made on another
+            # principal's behalf is not self-tuning, which is the only thing
+            # D-01 admits from Band C.
+            return self._deny(
+                capability.id,
+                band_id,
+                [
+                    f"{OUT_OF_ENVELOPE}: envelope {envelope.id} bounds "
+                    f"{envelope.principal!r}, and this request claims "
+                    f"{', '.join(sorted(request.claimed_identities))}",
+                    "an envelope constrains one principal: tuning on another's behalf, "
+                    "or under a bound written for someone else, is not self-tuning",
+                ],
+            )
+        if not request.adjustments:
+            # An adjustment that declares no parameter is not an adjustment, and
+            # an ALLOW for one would record "0 adjustments inside the declared
+            # limits" -- a sentence an auditor reads as a check having passed.
+            return self._deny(
+                capability.id,
+                band_id,
+                [
+                    f"{OUT_OF_ENVELOPE}: the request declares no adjustment, so there "
+                    f"is nothing for {envelope.id} to bound",
+                    "D-01: what is not declared cannot be checked, and an undeclared "
+                    "change is IL-13b",
+                ],
+            )
+
+        reasons: list[str] = []
+        bad_scope = scope_fault(request.scope)
+        if bad_scope is not None:
+            reasons.append(bad_scope)
+        elif not envelope.covers_target(request.scope):
+            reasons.append(
+                f"{OUT_OF_ENVELOPE}: scope {request.scope!r} is outside the targets "
+                f"{envelope.id} declares ({', '.join(envelope.targets)})"
+            )
+        reasons.extend(envelope.violations(request.adjustments))
+        if reasons:
+            return Verdict(
+                decision=Decision.DENY,
+                capability=capability.id,
+                band=band_id,
+                reasons=tuple(
+                    reasons
+                    + [
+                        f"D-01: {envelope.id} was signed by {envelope.signed_by}, who is "
+                        "not the principal it bounds. Widening it is their decision, "
+                        "not this caller's"
+                    ]
+                ),
+                obligations=obligations,
+            )
+        return None
 
     def _check_verifier_independence(
         self, request: AuthorityRequest, capability_id: str, band_id: str

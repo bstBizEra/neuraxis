@@ -47,10 +47,19 @@ capabilities:
   IL-25: { name: Self-Governing,     band: BAND-F, question: "Am I authorized to do this?" }
   IL-26: { name: Self-Securing,      band: BAND-F, question: "Is this action trustworthy and permitted?" }
   IL-27: { name: Self-Explaining,    band: BAND-F, question: "Can another actor understand and verify this decision?" }
-  # IL-13 sits in BAND-G, not BAND-C: self-improvement is system modification,
-  # not learning. Its original placement beside IL-11/IL-12 is what leads teams
-  # to ship it before assurance exists.
-  IL-13: { name: Self-Improving,     band: BAND-G, question: "How can my operating method improve?" }
+  # IL-13's original placement beside IL-11/IL-12 is what leads teams to ship
+  # self-improvement before assurance exists. ILR-001-DR D-01 splits it rather
+  # than relocating all of it, because the wholesale move is right in principle
+  # and loses in practice: teams adjust thresholds, retry budgets and routing
+  # weights as ordinary learning work, and a rule that forbids it gets
+  # reclassified as "configuration" and done outside the register. An
+  # unenforceable prohibition is worse than none, because it moves the activity
+  # out of view. So the line is drawn where it can be held, and it is
+  # mechanical rather than intentional: IL-13a is admissible from BAND-C, but
+  # only inside an envelope declared in advance, machine-evaluable, and signed
+  # by someone other than the component it bounds.
+  IL-13a: { name: Self-Tuning,       band: BAND-C, question: "Can I adjust my own parameters inside a declared bound?", envelope_bounded: true }
+  IL-13b: { name: Self-Modifying,    band: BAND-G, question: "How can my operating method improve?" }
   IL-28: { name: Self-Simulating,    band: BAND-G, question: "What happens if I choose A, B, or C?" }
   IL-29: { name: Self-Predicting,    band: BAND-G, question: "What is likely to happen next?" }
   IL-30: { name: Self-Experimenting, band: BAND-G, question: "Can I safely test a better method?" }
@@ -104,6 +113,20 @@ authority:
     - IL-31   # Self-Architecting
     - IL-32   # Self-Evolving
     - IL-33   # Governed Evolution
+  # Principals permitted to declare an envelope for an envelope-bounded
+  # capability (ILR-001-DR D-01). Left empty on purpose: no principal registry
+  # exists until KBS-001 T1 issues real identities, so naming one here would be
+  # a list of strings pretending to be an allowlist. Empty means any signer
+  # other than the bounded principal itself is accepted, and `neuraxis validate`
+  # reports that as a warning rather than passing it in silence.
+  envelope_signers: []
+  # Capabilities that MUST carry `envelope_bounded: true`. Named here as well as
+  # on the capability so the two have to agree: `envelope_bounded` defaults to
+  # false, and without this cross-check deleting one token above would turn
+  # IL-13a into unbounded self-tuning from BAND-C with no load error and no
+  # failing test.
+  envelope_required:
+    - IL-13a   # Self-Tuning
   # Risk at or above this rank escalates even when the band is attained.
   escalate_at_risk: CRITICAL
 
@@ -123,6 +146,11 @@ enforcement:
     max_ttl: 90d        # longer than this is a standing waiver
     max_active: 2       # a third means the matrix is mis-calibrated, not the band
     max_renewals: 1     # renewed twice is D-05's reversal trigger
+  # The bounded-tuning path (ILR-001-DR D-01). The register sets no TTL here;
+  # 90d is borrowed from the waiver bound for consistency and is a ceiling in
+  # code, so a registry may tighten it and cannot declare a perpetual envelope.
+  envelopes:
+    max_ttl: 90d
 
 scorecard:
   # Minimum per-term value required to operate at a given band.

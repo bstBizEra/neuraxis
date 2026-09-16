@@ -1,6 +1,6 @@
 # neuraxis — Roadmap
 
-**Current:** v0.8.0 - the exception path: expiring, recorded waivers whose bounds are enforced in code, not configured in YAML. 4 of 10 controls wired, on an unauthenticated substrate until T1. 389 Python tests + 19 JS contract tests.
+**Current:** v0.9.0 - bounded self-tuning: IL-13a admissible from Band C inside a declared, machine-evaluable envelope. 4 of 10 controls wired, on an unauthenticated substrate until T1. 492 Python tests + 19 JS contract tests.
 **To:** v1.0 (operational governance layer for BST-SA)
 **Governing constraint:** one task at a time, CI green = done.
 
@@ -14,6 +14,7 @@
 | v0.5 maw-js client | **shipped** |
 | v0.7.0 evidence records | **shipped** |
 | v0.8.0 waivers + monotonicity (D-05/D-06) | **shipped** |
+| v0.9.0 bounded self-tuning (D-01) | **shipped** |
 | v0.6 service mode | not until a caller needs it |
 | v1.0 hardening | **partially shipped as v0.6.0** — review done, fixable findings closed, structural limits documented |
 
@@ -280,3 +281,91 @@ slots licensing a band that is blocked on four non-compensable controls
 anyway. It is issued when T1 lands and GV-07 is actually what stands in the
 way - not before, because an active waiver that licenses nothing is exactly
 the decorative governance this package is against.
+
+---
+
+## v0.9.0 - Bounded self-tuning (ILR-001-DR D-01) - SHIPPED
+
+**Why this next.** D-01 was the last structural ruling in the register with no
+implementation. Until now the package shipped Option B - all of IL-13 in Band
+G - which the register calls right in principle and unenforceable in practice:
+teams adjust thresholds, retry budgets and routing weights as ordinary learning
+work, so a rule forbidding it gets reclassified as "configuration" and done
+outside the register. An unenforceable prohibition is worse than none, because
+it moves the activity out of view.
+
+| Piece | Detail |
+|---|---|
+| Capability split | `IL-13a Self-Tuning` (BAND-C, `envelope_bounded: true`) and `IL-13b Self-Modifying` (BAND-G) |
+| Envelope | principal, capability, signer, manifest ref, target prefixes, parameter intervals, hard expiry |
+| Declared in advance | a request naming no envelope, or declaring no adjustment, is denied |
+| Machine-evaluable | vacuous targets, traversal components, empty limit sets, non-finite bounds and bounds above 1e12 are all refused at load |
+| Not self-amended | `signed_by` may not be the principal it bounds, compared on the aggressive fold |
+| One principal | the envelope must bound *every* identity the request claims, so tuning on another's behalf is out |
+| Registry cross-check | `authority.envelope_required` must agree with `envelope_bounded`, or the registry does not load |
+| D-01 trigger | out-of-envelope denials counted per envelope over 90d; `neuraxis envelopes --audit` exits 10 when armed |
+| CLI | `neuraxis declare`, `neuraxis envelopes [--audit]`, `gate --envelope-ref --adjust k=v` |
+
+**The distinction that took a review to find.** There are now two ways this
+package compares principal names, and they must not be the same function:
+
+- Where a collision must produce a **denial** - verifier independence, the
+  self-waiver ban, the envelope self-signing check - the fold is aggressive
+  (NFKC, invisibles dropped, case-folded, marks stripped). Over-folding fails
+  closed.
+- Where a collision produces an **authorisation** - "does this envelope bound
+  you", "is this signer on the allowlist" - the comparison is NFC only. Nothing
+  is case-folded and no accent is stripped, because `agent-cortex` and
+  `agent-cörtex` are two principals and the second must not inherit the first's
+  envelope.
+
+The first cut used the aggressive fold for both, and its docstring carried a
+safety argument that was true in v0.8 and silently false in v0.9. That is the
+failure mode worth naming: not a missing check, but a correct argument reused
+one context too far.
+
+**What a second adversarial review found.** Fifteen findings, two critical,
+every one reproduced by execution before it was fixed.
+
+1. **`../` walked straight out of every envelope.** `hippocampus/lessons/../../etc/shadow`
+   starts with `hippocampus/lessons/`, so prefix matching called it covered.
+   Any envelope authorised any path in the tree. Paths are now compared
+   component-wise, and a scope carrying a traversal component, a mixed
+   separator, percent-encoding or an invisible character is refused outright
+   rather than resolved.
+2. **The fold, as above.**
+
+Then: an empty `limits` map loading as a bound that bounds nothing; `[0, 1e308]`
+as the infinity bypass with more zeroes; a register built outside the registry's
+policy silently voiding both the TTL ceiling and the signer allowlist (now
+re-checked at use, not only at load); a one-token YAML deletion disabling D-01
+with no load error and no failing test, guarded by a tautology marked
+`pragma: no cover`; an empty `adjustments` producing an ALLOW whose audit trail
+said "0 adjustment(s) inside the declared limits"; one appended `{` making every
+subsequent audit raise instead of reporting an armed trigger; naive timestamps
+dropped where unparseable ones were counted; the threshold missing from the
+audit result, so a clean report from a raised threshold was indistinguishable
+from a clean sink; `performer="   "` blanking the obligation audit's
+self-discharge check; and an unknown field in an envelope record being ignored,
+so a typo'd `limits_` loaded as an envelope with no numeric bound at all.
+
+**Acceptance - met**
+
+- [x] A declared bound authorises an in-range adjustment and denies an out-of-range one
+- [x] No envelope, no adjustment, wrong principal, wrong capability, expired, or policy-breaching all deny, and all carry the marker the trigger counts
+- [x] Prefix matching cannot be walked out of, and cannot be widened by a lookalike name
+- [x] A registry cannot disable the split by omission, loosen the TTL ceiling, or empty the signer allowlist
+- [x] The trigger arms at two denials against one envelope and survives a malformed sink line
+
+**What it still cannot do.** `signed_by` is a string in a JSONL file the bounded
+component can also write. Nothing verifies a signature and nothing dereferences
+`manifest_ref`. Populating `authority.envelope_signers` narrows who may be
+*named*; it does not make the naming authentic - so, unlike the rest of this
+package's limits, this one does not close when the allowlist is filled in. It
+closes when T1 gives the envelope file a kernel write path and real signing
+keys.
+
+**Left unrestricted on purpose.** The shipped registry ships
+`envelope_signers: []`, and `neuraxis validate` warns about it. Naming a
+principal there today would be a list of strings pretending to be an allowlist,
+since no principal registry exists until T1. The warning is the honest state.

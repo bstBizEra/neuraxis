@@ -27,9 +27,11 @@ from typing import Any, Sequence
 from . import __version__
 from .attestation import AttestationStore
 from .errors import NeuraxisError
+from .envelope import Envelope, EnvelopeRegister
 from .evidence import (
     DischargeRecord,
     EvidenceSink,
+    audit_envelopes,
     audit_obligations,
     record_decision,
 )
@@ -83,6 +85,16 @@ def _load_waivers(args: argparse.Namespace, registry: Any) -> WaiverRegister:
     return WaiverRegister.for_registry(registry, path=getattr(args, "waivers", None))
 
 
+def _load_envelopes(args: argparse.Namespace, registry: Any) -> EnvelopeRegister:
+    """Load the envelope file bound to this registry's policy.
+
+    An absent file means no envelopes, which denies every envelope-bounded
+    capability. That is the correct reading of "declared in advance": the
+    default is not permission.
+    """
+    return EnvelopeRegister.for_registry(registry, path=getattr(args, "envelopes_file", None))
+
+
 def _force_utf8_io() -> None:
     """Emit UTF-8 whatever the console code page is.
 
@@ -108,6 +120,27 @@ def _window(delta: timedelta) -> str:
     if seconds % 3600 == 0:
         return f"{seconds // 3600}h"
     return f"{seconds // 60}m"
+
+
+def _adjustments(pairs: Sequence[str] | None) -> dict[str, float]:
+    """Parse `--adjust key=value` pairs into numbers.
+
+    A value that is not a number is an error rather than a string passed
+    through: an envelope bounds magnitudes, and a bound that cannot be compared
+    is not a bound.
+    """
+    out: dict[str, float] = {}
+    for pair in pairs or ():
+        key, sep, raw = str(pair).partition("=")
+        if not sep or not key.strip():
+            raise NeuraxisError(f"--adjust expects key=value, got {pair!r}")
+        try:
+            out[key.strip()] = float(raw)
+        except ValueError:
+            raise NeuraxisError(
+                f"--adjust {key.strip()}={raw!r} is not a number"
+            ) from None
+    return out
 
 
 def _emit(payload: dict[str, Any], *, as_json: bool, text: str | None = None) -> None:
@@ -143,6 +176,15 @@ def cmd_validate(args: argparse.Namespace) -> int:
         "warnings": (
             [f"band {b} is granted to no role" for b in ungranted]
             + [f"capability {c} has no band" for c in orphans]
+            + (
+                [
+                    "authority.envelope_signers is empty: any principal other than the "
+                    "bounded one may declare an envelope (ILR-001-DR D-01)"
+                ]
+                if any(c.envelope_bounded for c in registry.capabilities.values())
+                and not registry.envelope_policy.signers_restricted
+                else []
+            )
         ),
         "valid": True,
     }
@@ -206,7 +248,9 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def cmd_gate(args: argparse.Namespace) -> int:
     registry, store = _load(args)
-    gate = GovernanceGate(registry, store, _load_waivers(args, registry))
+    gate = GovernanceGate(
+        registry, store, _load_waivers(args, registry), _load_envelopes(args, registry)
+    )
 
     if args.request == "-":
         try:
@@ -237,6 +281,8 @@ def cmd_gate(args: argparse.Namespace) -> int:
             verifier=args.verifier,
             rollback_tested=args.rollback_tested,
             ratification_ref=args.ratification_ref,
+            envelope_ref=args.envelope_ref,
+            adjustments=_adjustments(args.adjust),
         )
 
     verdict = gate.evaluate(request)
@@ -422,6 +468,150 @@ def cmd_obligations(args: argparse.Namespace) -> int:
     )
     _emit(audit.to_dict(), as_json=args.json, text="\n".join(lines))
     return EXIT_OK if audit.clean else EXIT_BY_DECISION[Decision.DENY]
+
+
+def cmd_envelopes(args: argparse.Namespace) -> int:
+    """Report the bounded-tuning path: which bounds are declared, and by whom.
+
+    With `--audit`, also counts out-of-envelope denials per envelope from the
+    evidence sink and exits 10 when the ILR-001-DR D-01 reversal condition is
+    armed.
+    """
+    registry, _ = _load(args)
+    envelopes = _load_envelopes(args, registry)
+    at = now_utc()
+    bounded = sorted(c.id for c in registry.capabilities.values() if c.envelope_bounded)
+    active_ids = {e.id for e in envelopes.active(at)}
+
+    audit = None
+    if args.audit:
+        sink = EvidenceSink(args.evidence_sink) if args.evidence_sink else None
+        # The generator is passed unconsumed so a malformed line becomes a
+        # reported fault rather than an exception that aborts the audit.
+        audit = audit_envelopes(sink.read() if sink else iter(()), at=at)
+
+    payload = {
+        "envelope_bounded_capabilities": bounded,
+        "signers_restricted": registry.envelope_policy.signers_restricted,
+        "signers": sorted(registry.envelope_policy.signers),
+        "max_ttl": _window(registry.envelope_policy.max_ttl),
+        "envelopes": [{**e.to_dict(), "active": e.id in active_ids} for e in envelopes],
+        "audit": audit.to_dict() if audit else None,
+    }
+
+    lines = [
+        f"envelope-bounded: {', '.join(bounded) or 'none'}",
+        f"max_ttl={_window(registry.envelope_policy.max_ttl)}",
+    ]
+    if registry.envelope_policy.signers_restricted:
+        lines.append(f"signers: {', '.join(sorted(registry.envelope_policy.signers))}")
+    else:
+        lines.append(
+            "WARNING: authority.envelope_signers is empty, so any principal other "
+            "than the bounded one may declare a bound. This is the weakest form "
+            "the control takes; it closes when T1 issues real identities."
+        )
+    lines.append("")
+    if not len(envelopes):
+        lines.append("No envelopes on file. Every envelope-bounded capability is denied.")
+    else:
+        lines.append("ID                STATE     CAPABILITY  PRINCIPAL        EXPIRES")
+        for e in envelopes:
+            state = "ACTIVE" if e.id in active_ids else (
+                "PENDING" if at < e.issued_at else "EXPIRED"
+            )
+            lines.append(
+                f"{e.id:<17} {state:<9} {e.capability:<11} {e.principal:<16} "
+                f"{e.expires_at.isoformat()}"
+            )
+            lines.append(f"    signed by: {e.signed_by}   manifest: {e.manifest_ref}")
+            lines.append(f"    targets: {', '.join(e.targets)}")
+            if e.limits:
+                bounds = ", ".join(
+                    f"{k}=[{v.low:g},{v.high:g}]" for k, v in sorted(e.limits.items())
+                )
+                lines.append(f"    limits: {bounds}")
+    if audit is not None:
+        lines.append("")
+        if audit.clean:
+            lines.append(
+                f"No envelope has {audit.threshold}+ out-of-envelope denials in "
+                f"{audit.window.days}d."
+            )
+        for line in audit.armed:
+            lines.append(f"TRIGGER ARMED: {line}")
+        for line in audit.faults:
+            lines.append(f"AUDIT FAULT: {line}")
+
+    _emit(payload, as_json=args.json, text="\n".join(lines))
+    return 10 if (audit is not None and not audit.clean) else EXIT_OK
+
+
+def cmd_declare(args: argparse.Namespace) -> int:
+    """Declare an envelope. Validated against the registry before it is written."""
+    registry, _ = _load(args)
+    existing = _load_envelopes(args, registry)
+    if existing.get(args.id) is not None:
+        print(f"error: envelope {args.id} already exists", file=sys.stderr)
+        return EXIT_ERROR
+
+    capability = registry.capabilities.get(args.capability)
+    if capability is None:
+        print(f"error: unknown capability {args.capability}", file=sys.stderr)
+        return EXIT_ERROR
+    if not capability.envelope_bounded:
+        print(
+            f"refused: {capability.id} is not envelope-bounded. Declaring a bound for "
+            "a capability the gate does not check is a record nobody reads",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+
+    limits: dict[str, list[float]] = {}
+    for spec in args.limit or ():
+        key, sep, rng = str(spec).partition("=")
+        low, colon, high = rng.partition(":")
+        if not sep or not colon or not key.strip():
+            print(f"error: --limit expects KEY=LOW:HIGH, got {spec!r}", file=sys.stderr)
+            return EXIT_ERROR
+        try:
+            limits[key.strip()] = [float(low), float(high)]
+        except ValueError:
+            print(f"error: --limit {spec!r} bounds are not numbers", file=sys.stderr)
+            return EXIT_ERROR
+
+    issued_at = now_utc()
+    try:
+        ttl = parse_duration(args.ttl)
+        candidate = Envelope(
+            id=args.id,
+            principal=args.principal,
+            capability=args.capability,
+            signed_by=args.signed_by,
+            manifest_ref=args.manifest_ref,
+            targets=tuple(args.target),
+            limits=limits,
+            issued_at=issued_at,
+            expires_at=issued_at + ttl,
+        )
+        EnvelopeRegister.for_registry(registry, envelopes=[*existing, candidate])
+    except NeuraxisError as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    EnvelopeRegister.append_to_file(args.envelopes_file, candidate)
+    _emit(
+        candidate.to_dict(),
+        as_json=args.json,
+        text=(
+            f"envelope {candidate.id} declared for {candidate.principal} on "
+            f"{candidate.capability} until {candidate.expires_at.isoformat()}\n"
+            f"  targets: {', '.join(candidate.targets)}\n"
+            f"  limits: {', '.join(sorted(candidate.limits)) or 'none'}\n"
+            f"  signed by {candidate.signed_by}, who is not {candidate.principal}"
+        ),
+    )
+    return EXIT_OK
 
 
 def cmd_waivers(args: argparse.Namespace) -> int:
@@ -697,6 +887,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--waivers", default="waivers.jsonl", dest="waivers",
         help="recorded, expiring exceptions to the gate (JSONL); absent means none",
     )
+    parser.add_argument(
+        "--envelopes", default="envelopes.jsonl", dest="envelopes_file",
+        help="declared bounds for envelope-bounded capabilities (JSONL); absent means none",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("validate", help="validate registry integrity")
@@ -716,6 +910,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--verifier", default=None)
     p.add_argument("--rollback-tested", action="store_true", dest="rollback_tested")
     p.add_argument("--ratification-ref", default=None, dest="ratification_ref")
+    p.add_argument(
+        "--envelope-ref", default=None, dest="envelope_ref",
+        help="the declared bound this adjustment claims to sit inside (IL-13a)",
+    )
+    p.add_argument(
+        "--adjust", action="append", default=None, metavar="KEY=VALUE",
+        help="a parameter this request proposes to change; repeat for several",
+    )
     p.set_defaults(func=cmd_gate)
 
     p = sub.add_parser("attest", help="record a governance control attestation")
@@ -739,6 +941,36 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("obligations", help="what the gate's ALLOWs owe, and what has been paid")
     p.add_argument("--grace", default=None, help="ignore obligations newer than this, e.g. 30m")
     p.set_defaults(func=cmd_obligations)
+
+    p = sub.add_parser("envelopes", help="declared bounds for envelope-bounded capabilities")
+    p.add_argument(
+        "--audit", action="store_true",
+        help="count out-of-envelope denials per envelope from the evidence sink",
+    )
+    p.set_defaults(func=cmd_envelopes)
+
+    p = sub.add_parser("declare", help="declare an envelope for an envelope-bounded capability")
+    p.add_argument("--id", required=True, help="stable id; the audit handle for this bound")
+    p.add_argument("--principal", required=True, help="the component this envelope bounds")
+    p.add_argument("--capability", required=True, help="the envelope-bounded IL-nn")
+    p.add_argument(
+        "--signed-by", required=True, dest="signed_by",
+        help="who declares it; may not be the principal it bounds",
+    )
+    p.add_argument(
+        "--manifest-ref", required=True, dest="manifest_ref",
+        help="reference to the signed mission manifest this bound comes from",
+    )
+    p.add_argument(
+        "--target", required=True, action="append",
+        help="a write-target prefix the principal may touch; repeat for several",
+    )
+    p.add_argument(
+        "--limit", action="append", default=None, metavar="KEY=LOW:HIGH",
+        help="a numeric interval a parameter may move within; repeat for several",
+    )
+    p.add_argument("--ttl", required=True, help="hard expiry as a duration, e.g. '30d'")
+    p.set_defaults(func=cmd_declare)
 
     p = sub.add_parser("waivers", help="the exception path: what is waived, by whom, until when")
     p.set_defaults(func=cmd_waivers)

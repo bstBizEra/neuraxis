@@ -26,6 +26,7 @@ UTC = timezone.utc
 REQUEST_REQUIRED_FIELDS = ("intent", "identity", "role", "capability", "scope")
 REQUEST_OPTIONAL_FIELDS = (
     "risk", "performer", "verifier", "rollback_tested", "ratification_ref",
+    "envelope_ref", "adjustments",
 )
 REQUEST_FIELDS = REQUEST_REQUIRED_FIELDS + REQUEST_OPTIONAL_FIELDS
 
@@ -89,6 +90,11 @@ class Capability:
     name: str
     band: str
     question: str
+    #: ILR-001-DR D-01. True for a capability admissible only inside a
+    #: declared, machine-evaluable envelope (IL-13a Self-Tuning). Declared in
+    #: the registry rather than matched on an id, so the rule travels with the
+    #: kernel config an auditor reads.
+    envelope_bounded: bool = False
 
 
 @dataclass(frozen=True)
@@ -121,16 +127,43 @@ def has_invisible(text: str) -> bool:
     return any(unicodedata.category(ch) in _INVISIBLE for ch in text)
 
 
+def strict_principal(text: str) -> str:
+    """Normalise a principal name without folding distinct names together.
+
+    NFC and whitespace only. Canonical composition unifies two encodings of
+    the *same* character and nothing else, so `café` and `café` are one
+    name while `agent-cörtex`, `AGENT-CORTEX` and the fullwidth
+    `ａｇｅｎｔ－ｃｏｒｔｅｘ` stay three different principals.
+
+    NFKC is deliberately not used here even though it is the usual identifier
+    normalisation: compatibility folding collapses characters that merely look
+    related, and this key is for comparisons where equality AUTHORISES --
+    "does this envelope bound you", "is this signer on the allowlist". Every
+    collision there widens a grant to a principal that was never named.
+
+    Returns "" for a name carrying an invisible character, which matches
+    nothing, so such a name can never satisfy an equality-authorises check.
+    """
+    if has_invisible(text):
+        return ""
+    return unicodedata.normalize("NFC", text).strip()
+
+
 def normalise_principal(text: str) -> str:
     """Fold a principal name to a comparison key.
 
     Deliberately aggressive: NFKC, then invisible codepoints dropped, then
     case-folded, then combining marks stripped. Every step can only make two
-    distinct strings collide, never separate two that matched -- and in both
-    places this key is used (verifier independence, and the self-waiver ban)
-    a collision produces a denial. Over-folding therefore fails closed, while
-    under-folding is the U+200B bypass that lets a principal verify or license
-    itself with one invisible character.
+    distinct strings collide, never separate two that matched.
+
+    Use this ONLY where a collision produces a denial -- verifier independence,
+    the self-waiver ban, the envelope self-signing check. There, over-folding
+    fails closed while under-folding is the U+200B bypass that lets a principal
+    verify, license or bound itself with one invisible character.
+
+    Where equality AUTHORISES, use `strict_principal` instead. An earlier cut of
+    the envelope path reused this fold for "does this envelope bound you", and
+    the safety argument above silently inverted: every collision became a grant.
     """
     folded = unicodedata.normalize("NFKC", text)
     folded = "".join(ch for ch in folded if unicodedata.category(ch) not in _INVISIBLE)
@@ -211,12 +244,43 @@ class AuthorityRequest:
     verifier: str | None = None
     rollback_tested: bool = False
     ratification_ref: str | None = None
+    # ILR-001-DR D-01. `envelope_ref` names the declared bound this adjustment
+    # claims to sit inside; `adjustments` is what it proposes to change. A
+    # request for an envelope-bounded capability that names neither is IL-13b
+    # wearing IL-13a's name, and the gate denies it.
+    envelope_ref: str | None = None
+    adjustments: Mapping[str, float] = field(default_factory=dict)
     requested_at: datetime = field(default_factory=now_utc)
 
     def __post_init__(self) -> None:
         for name in REQUEST_REQUIRED_FIELDS:
             if not str(getattr(self, name)).strip():
                 raise ValueError(f"AuthorityRequest.{name} must be non-empty")
+        if self.performer is not None and not str(self.performer).strip():
+            # `performer="   "` is truthy, so `effective_performer` would return
+            # "" rather than falling back to `identity` -- and an empty recorded
+            # performer switches off the obligation audit's self-discharge
+            # check. A blank is not a delegation.
+            raise ValueError(
+                "AuthorityRequest.performer is blank; omit it to act as `identity`"
+            )
+        if not isinstance(self.adjustments, Mapping):
+            raise ValueError(
+                "AuthorityRequest.adjustments must be a mapping of parameter to number"
+            )
+        # Frozen only at this level: the caller's dict is copied so a request
+        # cannot be widened after the gate has read it.
+        object.__setattr__(self, "adjustments", dict(self.adjustments))
+        for key, value in self.adjustments.items():
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError(f"AuthorityRequest.adjustments key {key!r} is not a name")
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                # bool is an int subclass, and `{"retries": true}` must not
+                # read as 1: an envelope bounds magnitudes, not flags.
+                raise ValueError(
+                    f"AuthorityRequest.adjustments[{key!r}] must be a number, "
+                    f"got {type(value).__name__} ({value!r})"
+                )
 
     @property
     def effective_performer(self) -> str:

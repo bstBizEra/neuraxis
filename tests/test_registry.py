@@ -30,7 +30,7 @@ def _minimal():
 
 def test_bundled_registry_loads_and_is_internally_consistent(registry):
     assert registry.framework == "bst-neuraxis"
-    assert len(registry.capabilities) == 33
+    assert len(registry.capabilities) == 34   # 33 ILs, with IL-13 split by D-01
     assert len(registry.bands) == 7
     assert len(registry.controls) == 10
     for cap in registry.capabilities.values():
@@ -40,10 +40,18 @@ def test_bundled_registry_loads_and_is_internally_consistent(registry):
             assert control in registry.controls
 
 
-def test_il_13_is_in_band_g_not_band_c(registry):
-    """The ILR-001 correction: self-improvement is system modification."""
-    assert registry.capability("IL-13").band == "BAND-G"
-    assert "IL-13" not in registry.band("BAND-C").capabilities
+def test_il_13_is_split_by_d01(registry):
+    """The ILR-001 correction, as ILR-001-DR D-01 refines it.
+
+    Self-modification stays in BAND-G. Envelope-bounded self-tuning is
+    admissible from BAND-C, because a rule forbidding parameter adjustment
+    outright gets reclassified as "configuration" and done out of view.
+    """
+    assert registry.capability("IL-13b").band == "BAND-G"
+    assert registry.capability("IL-13a").band == "BAND-C"
+    assert registry.capability("IL-13a").envelope_bounded is True
+    assert registry.capability("IL-13b").envelope_bounded is False
+    assert "IL-13" not in registry.capabilities
 
 
 def test_band_g_requires_every_governance_control(registry):

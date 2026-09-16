@@ -38,6 +38,15 @@ class AttestationError(NeuraxisError):
     """An attestation is malformed, future-dated, or otherwise untrustworthy."""
 
 
+class EnvelopeError(NeuraxisError):
+    """An envelope is malformed, self-signed, or not machine-evaluable.
+
+    Refused rather than narrowed. "Bounded" is what the evaluator can check;
+    an envelope carrying a constraint this package cannot decide is prose, and
+    prose admits IL-13b under IL-13a's name.
+    """
+
+
 class WaiverError(NeuraxisError):
     """A waiver is malformed, unbounded, or waives a non-compensable control.
 

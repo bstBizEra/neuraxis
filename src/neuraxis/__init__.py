@@ -19,9 +19,11 @@ controls paired to it, enforced mechanically rather than by instruction.
 from __future__ import annotations
 
 from .attestation import AttestationStore
+from .envelope import Envelope, EnvelopePolicy, EnvelopeRegister, Limit
 from .errors import (
     AttestationError,
     CycleError,
+    EnvelopeError,
     NeuraxisError,
     RegistryError,
     UnknownCapabilityError,
@@ -30,11 +32,13 @@ from .errors import (
 )
 from .evidence import (
     DischargeRecord,
+    EnvelopeAudit,
     EvidenceError,
     EvidenceRecord,
     EvidenceSink,
     ObligationAudit,
     OutstandingObligation,
+    audit_envelopes,
     audit_obligations,
     record_decision,
 )
@@ -66,7 +70,7 @@ from .resolver import BandResolver
 from .scorecard import Scorecard, measure
 from .waiver import Waiver, WaiverPolicy, WaiverRegister
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 FRAMEWORK = "bst-neuraxis"
 PRINCIPLE = "governed-evolution"
 
@@ -84,12 +88,18 @@ __all__ = [
     "CycleError",
     "Decision",
     "DischargeRecord",
+    "Envelope",
+    "EnvelopeAudit",
+    "EnvelopeError",
+    "EnvelopePolicy",
+    "EnvelopeRegister",
     "EvidenceError",
     "EvidenceRecord",
     "EvidenceSink",
     "FRAMEWORK",
     "GVControl",
     "GovernanceGate",
+    "Limit",
     "NeuraxisError",
     "Obligation",
     "ObligationAudit",
@@ -111,6 +121,7 @@ __all__ = [
     "WaiverPolicy",
     "WaiverRegister",
     "__version__",
+    "audit_envelopes",
     "audit_obligations",
     "get_provider",
     "load_registry",

@@ -69,6 +69,7 @@ def test_contract_reports_request_fields_the_parser_actually_accepts(capsys):
         "intent": "i", "identity": "a", "role": "operator", "capability": "IL-01",
         "scope": "s", "risk": "LOW", "performer": "a", "verifier": "b",
         "rollback_tested": True, "ratification_ref": "BADF-1",
+        "envelope_ref": "ENV-1", "adjustments": {"retry_budget": 3},
     }
     assert set(payload) == set(REQUEST_REQUIRED_FIELDS) | set(REQUEST_OPTIONAL_FIELDS)
     AuthorityRequest.from_dict(payload)

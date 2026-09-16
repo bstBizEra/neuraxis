@@ -189,7 +189,7 @@ def test_band_g_requires_ratification_even_for_non_floor_capabilities(gate):
     verdict = gate.evaluate(
         AuthorityRequest(
             intent="improve the prompt template", identity="op", role="operator",
-            capability="IL-13", scope="skillshub", verifier="ci", rollback_tested=True,
+            capability="IL-13b", scope="skillshub", verifier="ci", rollback_tested=True,
         )
     )
     assert verdict.decision is Decision.WAIT_FOR_AUTHORITY

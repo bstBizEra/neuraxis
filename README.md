@@ -401,3 +401,62 @@ waivers to void a third party's legitimate one - the cap is fail-closed, which
 makes it a denial-of-service in the hands of anyone with write access to the
 file. Both are the same limit as the evidence sink's: the substrate is
 unauthenticated until KBS-001 T1 issues real identities.
+
+## Envelopes - bounded self-tuning (IL-13a)
+
+`IL-13` is split. `IL-13b Self-Modifying` stays in Band G behind full
+assurance. `IL-13a Self-Tuning` is admissible from Band C, and only inside a
+bound declared in advance by someone other than the component it constrains.
+
+```bash
+neuraxis declare --id ENV-CORTEX --principal agent-cortex --capability IL-13a \
+  --signed-by ops-console --manifest-ref "bst-sa/manifest#v7" \
+  --target hippocampus/lessons --limit retry_budget=1:5 --ttl 30d
+
+neuraxis gate --capability IL-13a --identity agent-cortex --role cortex \
+  --intent "tune retry budget" --scope hippocampus/lessons/thresholds \
+  --verifier github-ci --rollback-tested \
+  --envelope-ref ENV-CORTEX --adjust retry_budget=3
+#  ALLOW IL-13a (BAND-C)
+#    - bounded by envelope ENV-CORTEX (scope hippocampus/lessons/thresholds;
+#      1 adjustment(s) inside the declared limits)
+
+neuraxis envelopes --audit    # exits 10 when the D-01 trigger is armed
+```
+
+**Why a split rather than a ban.** The wholesale move of IL-13 to Band G is
+right in principle and loses in practice: teams adjust thresholds, retry
+budgets and routing weights as ordinary learning work, and a rule that forbids
+it gets reclassified as "configuration" and done anyway, outside the register.
+An unenforceable prohibition is worse than none, because it moves the activity
+out of view. So the line is drawn where it can be held, and it is mechanical.
+
+**What an envelope cannot do.**
+
+| | |
+|---|---|
+| Exist implicitly | A request naming no envelope, or declaring no adjustment, is denied. "Declared in advance" means the default is not permission |
+| Match everything | A target of `*`, `/` or `**` is refused at load, and so is an empty limit set: a boundary that bounds nothing is permission wearing a boundary's name |
+| Be walked out of | Targets are compared component by component. A scope with a `..`, a mixed separator, percent-encoding or an invisible character is refused rather than resolved |
+| Bound without bounding | A limit must be a finite interval no wider than 1e12. `[0, 1e308]` is the infinity bypass with more zeroes |
+| Be widened by its holder | `signed_by` may not be the principal it bounds, compared on the fold that collapses lookalikes |
+| Be borrowed | The envelope must bound *every* identity the request claims, so naming someone else as `performer` unlocks nothing |
+| Outlive its mission | 90-day ceiling in code; a registry may tighten it and cannot raise it |
+| Escape its registry | The TTL ceiling and signer allowlist are re-checked where the envelope is used, not only where it was loaded |
+| Be disabled by omission | `authority.envelope_required` must agree with `envelope_bounded`, or the registry does not load |
+
+**Two principal keys, and why.** Where a collision must produce a **denial** -
+verifier independence, the self-waiver ban, envelope self-signing - names are
+folded aggressively (NFKC, invisibles dropped, case-folded, marks stripped), so
+over-folding fails closed. Where a collision produces an **authorisation** -
+"does this envelope bound you", "is this signer on the allowlist" - the
+comparison is NFC only: `agent-cortex` and `agent-cörtex` are two principals,
+and the second must not inherit the first's envelope.
+
+**And its limit.** `signed_by` is a string in a JSONL file that the bounded
+component can also write. Nothing here verifies a signature and nothing
+dereferences `manifest_ref`. Filling in `authority.envelope_signers` narrows who
+may be *named*; it does not make the naming authentic. Unlike the rest of the
+limits in this README, this one does not close when the allowlist is populated -
+it closes when KBS-001 T1 gives the envelope file a kernel write path and real
+signing keys.

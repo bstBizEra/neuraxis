@@ -50,7 +50,7 @@ def test_validate_json_shape(capsys):
     payload = json.loads(out.out)
     assert code == 0
     assert payload["valid"] is True
-    assert payload["capabilities"] == 33
+    assert payload["capabilities"] == 34
 
 
 def test_status_with_no_attestations_reports_all_blocked(tmp_path, capsys):
