@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "neuraxis"
-version = "0.9.0"
-description = "BST Neuraxis — Intelligent Loop Registry and Governance Gate (ILR-001)"
+version = "0.10.0"
+description = "BST Neuraxis â€” Intelligent Loop Registry and Governance Gate (ILR-001)"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Proprietary — BizEra / BST" }
+license = { text = "Proprietary â€” BizEra / BST" }
 authors = [{ name = "BizEra (BST)" }]
 dependencies = ["PyYAML>=6.0"]
 

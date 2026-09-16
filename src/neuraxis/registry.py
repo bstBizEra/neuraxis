@@ -7,6 +7,7 @@ because a half-loaded registry would silently under-constrain the gate.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -24,6 +25,25 @@ DEFAULT_REGISTRY = Path(__file__).parent / "config" / "neuraxis.yaml"
 
 _DURATION = re.compile(r"^(\d+)([smhd])$")
 _UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
+
+
+def registry_digest(path: str | Path | None = None) -> tuple[str, Path]:
+    """SHA-256 of the registry file, and the path it was read from.
+
+    Hashes the bytes on disk, not the parsed document. The digest has to match
+    what `sha256sum` prints and what `release.yml` records, because the whole
+    point is that an operator can compare the kernel config they are running
+    against the version that was ratified -- and they will do it with the tool
+    that is already on the machine, not with this one.
+
+    KBS-001 K-09. The roadmap prescribes a weekly drift check of the registry
+    against its ratified version; that sentence was inert until releases began
+    carrying a digest.
+    """
+    path = Path(path) if path else DEFAULT_REGISTRY
+    if not path.is_file():
+        raise RegistryError(f"registry not found at {path}")
+    return hashlib.sha256(path.read_bytes()).hexdigest(), path
 
 
 def parse_duration(text: str) -> timedelta:
@@ -56,6 +76,10 @@ class Registry:
     thresholds: Mapping[str, Mapping[str, float]]
     waiver_policy: WaiverPolicy = field(default_factory=WaiverPolicy)
     envelope_policy: EnvelopePolicy = field(default_factory=EnvelopePolicy)
+    #: The file this registry was loaded from, so a drift check can name and
+    #: digest the exact bytes the gate is running on rather than whichever
+    #: registry happens to be on the default path.
+    source: Path | None = None
 
     # ---- lookups -------------------------------------------------------
 
@@ -280,6 +304,7 @@ def load_registry(path: str | Path | None = None) -> Registry:
         thresholds=thresholds,
         waiver_policy=waiver_policy,
         envelope_policy=envelope_policy,
+        source=path,
     )
 
 

@@ -1,4 +1,4 @@
-"""BST Neuraxis — Intelligent Loop Registry and Governance Gate (ILR-001).
+"""BST Neuraxis â€” Intelligent Loop Registry and Governance Gate (ILR-001).
 
 Principle: Governed Evolution. Capability is licensed by the governance
 controls paired to it, enforced mechanically rather than by instruction.
@@ -70,7 +70,7 @@ from .resolver import BandResolver
 from .scorecard import Scorecard, measure
 from .waiver import Waiver, WaiverPolicy, WaiverRegister
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 FRAMEWORK = "bst-neuraxis"
 PRINCIPLE = "governed-evolution"
 

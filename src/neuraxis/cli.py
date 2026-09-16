@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -48,7 +49,7 @@ from .model import (
 )
 from .providers import ProviderOutcome, get_provider, providers_for, run_provider
 from .providers.registry import UnknownProviderError, coverage
-from .registry import load_registry, parse_duration
+from .registry import load_registry, parse_duration, registry_digest
 from .resolver import BandResolver
 from .scorecard import measure
 from .waiver import Waiver, WaiverRegister
@@ -155,6 +156,7 @@ def _emit(payload: dict[str, Any], *, as_json: bool, text: str | None = None) ->
 
 def cmd_validate(args: argparse.Namespace) -> int:
     registry = load_registry(args.registry)
+    sha, source = registry_digest(args.registry)
     orphans = [
         cid for cid, cap in registry.capabilities.items() if cap.band not in registry.bands
     ]
@@ -173,6 +175,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
         },
         "enforcement_mode": registry.enforcement_mode,
         "on_missing_attestation": registry.on_missing_attestation,
+        # The digest of the kernel config actually loaded. A release records
+        # the same value, so "am I running the ratified registry?" is one
+        # comparison rather than a judgement (KBS-001 K-09).
+        "registry_path": str(source),
+        "registry_sha256": sha,
         "warnings": (
             [f"band {b} is granted to no role" for b in ungranted]
             + [f"capability {c} has no band" for c in orphans]
@@ -200,9 +207,106 @@ def cmd_validate(args: argparse.Namespace) -> int:
             for c in registry.controls.values()
         ],
     ]
+    lines.append(f"  registry:  {source}")
+    lines.append(f"  sha256:    {sha}")
     lines += [f"  WARNING: {w}" for w in payload["warnings"]]
     lines.append("  registry valid")
     _emit(payload, as_json=args.json, text="\n".join(lines))
+    return EXIT_OK
+
+
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _expected_digest(args: argparse.Namespace) -> str | None:
+    """The digest to compare against, from a flag or a release asset.
+
+    An expectation that cannot be read is an error, never a pass. A drift check
+    that treats an unparseable expectation as "no drift" is the vacuous probe
+    in its cheapest form: it reports clean for a file nobody could read.
+    """
+    if args.expect and args.expect_file:
+        raise NeuraxisError("pass --expect or --expect-file, not both")
+    raw = args.expect
+    if args.expect_file:
+        path = Path(args.expect_file)
+        if not path.is_file():
+            raise NeuraxisError(f"expectation file not found: {path}")
+        raw = None
+        for line in path.read_text(encoding="utf-8-sig").split("\n"):
+            token = line.strip().lower()
+            if token.startswith("sha256"):
+                raw = token.split()[-1]
+                break
+            if _SHA256.match(token):
+                raw = token
+                break
+        if raw is None:
+            raise NeuraxisError(
+                f"{path} contains no sha256 line; expected a REGISTRY-DIGEST.txt "
+                "from a release, or a file holding a bare 64-character digest"
+            )
+    if raw is None:
+        return None
+    candidate = str(raw).strip().lower()
+    if not _SHA256.match(candidate):
+        raise NeuraxisError(
+            f"{candidate!r} is not a sha256 digest (64 lowercase hex characters)"
+        )
+    return candidate
+
+
+def cmd_drift(args: argparse.Namespace) -> int:
+    """Compare the kernel registry on disk against its ratified digest.
+
+    KBS-001 K-09. The registry is kernel; a release records the SHA-256 of the
+    exact bytes that were ratified, and this asks whether the file the gate is
+    about to load is that one.
+
+    A mismatch is not automatically an incident. It means the kernel config on
+    disk is not the one that was released, which is either a change nobody
+    ratified or a version you did not think you were running. Both are worth
+    knowing before the next decision is made on it.
+    """
+    registry = load_registry(args.registry)          # drift on an invalid registry is moot
+    sha, source = registry_digest(args.registry)
+    expected = _expected_digest(args)
+
+    matches = None if expected is None else (sha == expected)
+    payload = {
+        "registry_path": str(source),
+        "registry_sha256": sha,
+        "registry_version": registry.version,
+        "package_version": __version__,
+        "expected_sha256": expected,
+        "matches": matches,
+    }
+    lines = [
+        f"registry:          {source}",
+        f"sha256:            {sha}",
+        f"registry version:  {registry.version}   (the config's own version, not the package's)",
+        f"package version:   {__version__}",
+    ]
+    if expected is None:
+        lines.append("")
+        lines.append(
+            "No expectation given, so nothing was compared. Pass --expect <sha256> or "
+            "--expect-file REGISTRY-DIGEST.txt from the release you believe you are running."
+        )
+    elif matches:
+        lines.append("")
+        lines.append("MATCH: the registry on disk is the ratified one.")
+    else:
+        lines.append(f"expected: {expected}")
+        lines.append("")
+        lines.append(
+            "DRIFT: the kernel registry on disk is not the ratified one. Either a change "
+            "was made without a release, or this is not the version you think it is. "
+            "Do not attest anything against it until that is resolved."
+        )
+    _emit(payload, as_json=args.json, text="\n".join(lines))
+    if matches is False:
+        return EXIT_BY_DECISION[Decision.DENY]
     return EXIT_OK
 
 
@@ -895,6 +999,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("validate", help="validate registry integrity")
     p.set_defaults(func=cmd_validate)
+
+    p = sub.add_parser(
+        "drift", help="is the kernel registry on disk the ratified one? (KBS-001 K-09)"
+    )
+    p.add_argument("--expect", default=None, help="the ratified sha256 to compare against")
+    p.add_argument(
+        "--expect-file", default=None, dest="expect_file",
+        help="a REGISTRY-DIGEST.txt from the release you believe you are running",
+    )
+    p.set_defaults(func=cmd_drift)
 
     p = sub.add_parser("status", help="band attainment against current attestations")
     p.set_defaults(func=cmd_status)
