@@ -1,6 +1,6 @@
 # neuraxis
 
-**BST Neuraxis — Intelligent Loop Registry and Governance Gate.** Reference implementation of ILR-001. **v0.6.0.**
+**BST Neuraxis — Intelligent Loop Registry and Governance Gate.** Reference implementation of ILR-001. **v0.7.0.**
 
 Capability is licensed by the governance controls paired to it. A capability whose controls do not hold a current passing attestation is denied — mechanically, at the call site, not by instruction to an agent.
 
@@ -209,6 +209,44 @@ client maps to nothing. See `clients/js/README.md`.
 
 ---
 
+## Evidence records — the feedback edge
+
+Before v0.7 the gate was write-only: it issued verdicts and nothing recorded
+them, so no later cycle could observe that an ALLOW had been issued — let alone
+that what it owed went unpaid. That is why three obligations were labels.
+
+```bash
+neuraxis --evidence-sink evidence.jsonl gate --capability IL-06 ... 
+#  ALLOW IL-06 (BAND-B)
+#    verdict 514e47ce66dbc807
+#    obligations: emit-evidence-record, independent-verification, tested-rollback
+
+neuraxis --evidence-sink evidence.jsonl obligations
+#  1 ALLOW(s) owing 3 obligation(s); 0 discharged
+#    OUTSTANDING emit-evidence-record — IL-06 by agent-drafter (514e47ce66dbc807, ...)
+
+neuraxis --evidence-sink evidence.jsonl discharge \
+    --verdict 514e47ce66dbc807 --obligation emit-evidence-record \
+    --by github-ci --evidence-ref sink://...
+```
+
+**An ALLOW that cannot be recorded becomes a DENY.** A permission granted with
+no trace is exactly the condition GV-03 exists to rule out, so a sink write
+failure refuses the caller rather than quietly permitting an unaudited action.
+A block that cannot be recorded stays a block — nothing was permitted.
+
+**Self-discharge is a fault**, compared stripped and case-folded: paying your
+own obligation is NX-INV-2 at the obligation layer. So is a discharge for a
+verdict never issued, or for an obligation that verdict did not owe.
+
+> **This is not an attestation of GV-03.** The sink is an ordinary append-only
+> file the audited party can also write, so omission stays undetectable. It
+> creates the record stream GV-03 is meant to protect. Building it before the
+> WORM sink is deliberate: when T1 lands there is something for it to make
+> tamper-evident, rather than a protected sink with nothing in it.
+
+---
+
 ## The contract command
 
 ```bash
@@ -299,7 +337,7 @@ corresponds to a confirmed exploit, and each has a regression test in
 - **Six of ten controls have no real provider yet.** `neuraxis providers` says which and why. Until they are wired, those controls can only be attested by hand — which is an assertion, not evidence.
 - **Identity, role and risk are accepted as asserted.** `role` is a free string on the request; nothing binds it to `identity`, and `identity` is never authenticated. `risk` defaults to LOW and is requester-supplied, so `escalate_at_risk` escalates only requests that volunteer being critical. Binding these is L0's job, not the gate's.
 - **A registry or evidence path is whatever the caller passes.** `--registry` accepts any file. Process-level integrity — which binary, which config, which environment — is outside this package and belongs to the kernel boundary.
-- **Three obligations are labels, not controls.** `emit-evidence-record`, `bounded-scope` and `provenance-binding` name duties the caller owes; nothing verifies they were discharged, because no verdict is written back for a later cycle to audit.
+- **Obligation discharge is recorded, not verified.** Since v0.7 an ALLOW and its obligations are written to the sink and `obligations` reports what went unpaid — but a discharge record asserts that a duty was met without proving it. The join catches self-discharge, forged verdict ids and obligations never owed; it does not check that the cited evidence exists.
 - **The vacuity probe is provider testimony.** It proves a probe exists and reports failure, not that the probe exercised `check()`. No in-process harness can close that.
 - **Attestations are as good as the checks that produce them.** The harness enforces the four rules mechanically, but it cannot tell whether a provider is auditing the right thing. It catches a check that cannot fail; it does not catch a check that measures the wrong property.
 - **The JSONL attestation file is a local mirror, not an audit trail.** Under KBS-001 the authoritative sink is WORM-backed. Do not treat this file as evidence of record.

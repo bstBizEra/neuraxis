@@ -27,6 +27,16 @@ from .errors import (
     UnknownCapabilityError,
     UnknownControlError,
 )
+from .evidence import (
+    DischargeRecord,
+    EvidenceError,
+    EvidenceRecord,
+    EvidenceSink,
+    ObligationAudit,
+    OutstandingObligation,
+    audit_obligations,
+    record_decision,
+)
 from .gate import GovernanceGate
 from .guard import CapabilityDenied, CapabilityGuard
 from .model import (
@@ -54,7 +64,7 @@ from .registry import Registry, load_registry
 from .resolver import BandResolver
 from .scorecard import Scorecard, measure
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 FRAMEWORK = "bst-neuraxis"
 PRINCIPLE = "governed-evolution"
 
@@ -71,11 +81,17 @@ __all__ = [
     "CapabilityGuard",
     "CycleError",
     "Decision",
+    "DischargeRecord",
+    "EvidenceError",
+    "EvidenceRecord",
+    "EvidenceSink",
     "FRAMEWORK",
     "GVControl",
     "GovernanceGate",
     "NeuraxisError",
     "Obligation",
+    "ObligationAudit",
+    "OutstandingObligation",
     "PRINCIPLE",
     "Provider",
     "ProviderOutcome",
@@ -89,9 +105,11 @@ __all__ = [
     "UnwiredProvider",
     "Verdict",
     "__version__",
+    "audit_obligations",
     "get_provider",
     "load_registry",
     "measure",
     "providers_for",
+    "record_decision",
     "run_provider",
 ]

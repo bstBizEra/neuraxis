@@ -27,6 +27,12 @@ from typing import Any, Sequence
 from . import __version__
 from .attestation import AttestationStore
 from .errors import NeuraxisError
+from .evidence import (
+    DischargeRecord,
+    EvidenceSink,
+    audit_obligations,
+    record_decision,
+)
 from .gate import GovernanceGate
 from .model import (
     REQUEST_OPTIONAL_FIELDS,
@@ -40,7 +46,7 @@ from .model import (
 )
 from .providers import ProviderOutcome, get_provider, providers_for, run_provider
 from .providers.registry import UnknownProviderError, coverage
-from .registry import load_registry
+from .registry import load_registry, parse_duration
 from .resolver import BandResolver
 from .scorecard import measure
 
@@ -209,10 +215,21 @@ def cmd_gate(args: argparse.Namespace) -> int:
         )
 
     verdict = gate.evaluate(request)
+
+    # Record before reporting: a caller must never be told ALLOW for a decision
+    # that left no trace, so the recording result is what gets reported.
+    sink = EvidenceSink(args.evidence_sink) if args.evidence_sink else None
+    verdict, record = record_decision(sink, request, verdict)
+
     if args.json:
-        print(verdict.to_json())
+        payload = verdict.to_dict()
+        if record is not None:
+            payload["verdict_id"] = record.verdict_id
+        print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         print(f"{verdict.decision.value} {verdict.capability} ({verdict.band or 'no band'})")
+        if record is not None:
+            print(f"  verdict {record.verdict_id}")
         for reason in verdict.reasons:
             print(f"  - {reason}")
         if verdict.obligations:
@@ -317,6 +334,67 @@ def cmd_score(args: argparse.Namespace) -> int:
     lines += [f"    - {r}" for r in reasons]
     _emit(payload, as_json=args.json, text="\n".join(lines))
     return EXIT_OK if permitted else EXIT_BY_DECISION[Decision.DENY]
+
+
+def cmd_discharge(args: argparse.Namespace) -> int:
+    """Record that one obligation of one verdict was met."""
+    if not args.evidence_sink:
+        print("error: --evidence-sink is required to discharge an obligation", file=sys.stderr)
+        return EXIT_ERROR
+    sink = EvidenceSink(args.evidence_sink)
+    known = {r.get("verdict_id") for r in sink.read() if r.get("record") == "evidence"}
+    if args.verdict not in known:
+        print(
+            f"error: no verdict {args.verdict} in {args.evidence_sink}; "
+            "a discharge for a decision that was never issued is not evidence",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+
+    discharge = DischargeRecord(
+        verdict_id=args.verdict,
+        obligation=args.obligation,
+        at=now_utc(),
+        by=args.by,
+        evidence_ref=args.evidence_ref,
+    )
+    sink.append(discharge)
+    _emit(
+        discharge.to_dict(),
+        as_json=args.json,
+        text=f"discharged {args.obligation} for verdict {args.verdict} ({args.evidence_ref})",
+    )
+    return EXIT_OK
+
+
+def cmd_obligations(args: argparse.Namespace) -> int:
+    """Report what the gate's ALLOWs owe and what has been paid."""
+    if not args.evidence_sink:
+        print("error: --evidence-sink is required", file=sys.stderr)
+        return EXIT_ERROR
+    sink = EvidenceSink(args.evidence_sink)
+    grace = parse_duration(args.grace) if args.grace else None
+    audit = audit_obligations(sink.read(), grace=grace)
+
+    lines = [
+        f"{audit.allowed} ALLOW(s) owing {audit.owed} obligation(s); "
+        f"{audit.discharged} discharged",
+    ]
+    for item in audit.outstanding:
+        lines.append(
+            f"  OUTSTANDING {item.obligation} — {item.capability} by {item.performer} "
+            f"({item.verdict_id}, {item.at.isoformat()})"
+        )
+    for fault in audit.faults:
+        lines.append(f"  FAULT {fault}")
+    if audit.clean:
+        lines.append("  every obligation owed has been discharged by another identity")
+    lines.append(
+        "  note: this reads a sink the audited party can also write. It is the record "
+        "stream GV-03 protects, not an attestation of GV-03."
+    )
+    _emit(audit.to_dict(), as_json=args.json, text="\n".join(lines))
+    return EXIT_OK if audit.clean else EXIT_BY_DECISION[Decision.DENY]
 
 
 def cmd_contract(args: argparse.Namespace) -> int:
@@ -464,6 +542,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="BADF gate log consumed by the ratification provider (GV-07)",
     )
     parser.add_argument(
+        "--evidence-sink", default=None, dest="evidence_sink",
+        help="append gate decisions and obligation discharges here (JSONL)",
+    )
+    parser.add_argument(
         "--lease-log", default="lease-log.jsonl", dest="lease_log",
         help="L0 lease log consumed by the authority and containment providers (GV-02, GV-06)",
     )
@@ -498,6 +580,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="run this provider and record its result instead of asserting one by hand",
     )
     p.set_defaults(func=cmd_attest)
+
+    p = sub.add_parser("discharge", help="record that an obligation of a verdict was met")
+    p.add_argument("--verdict", required=True, help="verdict_id from the gate")
+    p.add_argument("--obligation", required=True)
+    p.add_argument("--by", required=True, help="identity discharging it; may not be the performer")
+    p.add_argument("--evidence-ref", required=True, dest="evidence_ref")
+    p.set_defaults(func=cmd_discharge)
+
+    p = sub.add_parser("obligations", help="what the gate's ALLOWs owe, and what has been paid")
+    p.add_argument("--grace", default=None, help="ignore obligations newer than this, e.g. 30m")
+    p.set_defaults(func=cmd_obligations)
 
     p = sub.add_parser("contract", help="machine-readable CLI contract for non-Python clients")
     p.set_defaults(func=cmd_contract)
