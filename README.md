@@ -294,6 +294,7 @@ neuraxis attest --control GV-08 --result "$RESULT" \
 | `scorecard` | `I = C x R x L x A x V x G`, used as a veto |
 | `providers` | Provider contract, conformance harness, builtin providers |
 | `conformance` | Black-box suite for attestation **sources** |
+| `roadmap` | The build sequence as a graph, resolved against the live gate |
 | `caller` | Black-box suite for gate **callers** (ILR-001-DR D-07) |
 | `cli` | The JSON/exit-code contract |
 
@@ -356,7 +357,7 @@ corresponds to a confirmed exploit, and each has a regression test in
 python -m pytest -q --cov=neuraxis --cov-report=term-missing
 ```
 
-**Python:** 606 tests, 94% coverage. **JS client:** 24 contract tests. The suite includes explicit **positive controls** — `test_allows_when_everything_holds`, `test_ratified_non_delegable_capability_is_allowed`, `test_guard_decorator_runs_the_body_on_allow`. Without them, a gate that denied unconditionally would pass every other assertion in the suite. `tests/test_failclosed.py` asserts that faults become denials rather than implicit allows.
+**Python:** 659 tests, 94% coverage. **JS client:** 24 contract tests. The suite includes explicit **positive controls** — `test_allows_when_everything_holds`, `test_ratified_non_delegable_capability_is_allowed`, `test_guard_decorator_runs_the_body_on_allow`. Without them, a gate that denied unconditionally would pass every other assertion in the suite. `tests/test_failclosed.py` asserts that faults become denials rather than implicit allows.
 
 ---
 
@@ -609,6 +610,55 @@ on DENY. Its author would test it against a DENY, watch it refuse, and ship it.
 **What it does not prove.** D-03 has five call sites and this proves the one it
 was given; each needs its own conforming entry point. It does not test the
 timeout, because testing a hang means waiting on one.
+
+## The roadmap is a graph, not a list
+
+Every rule in this package is mechanical. The plan deciding what to build next
+was prose until v0.14.0 — the one artefact nothing enforced.
+
+```bash
+neuraxis roadmap --next     # what is actionable now, highest register score first
+neuraxis roadmap --item W2  # one item, gate by gate
+neuraxis roadmap --check    # also run the command gates and acceptance checks
+```
+
+```
+ACTIONABLE NOW
+  3.65  W8    The decision register as machine-readable config  [neuraxis]
+
+EXTERNALS, BY OWNER
+  L0           L0-ENTRY-POINTS
+  OP-Vily      BST-SA-WORKSTREAM, DEPLOY-TARGET, E-13, T1, T3, T4
+
+FREEZE IN FORCE (ILR-001-DR-3.3)
+  - W9 is partial, waiting on external T1, external L0-ENTRY-POINTS
+```
+
+**Readiness is computed, not declared.** `state: shipped` is a claim somebody
+typed. Whether an item is *ready* comes from the resolver the gate runs on — band
+attainment, control freshness, item dependencies — so a `shipped` item with an
+unsatisfied gate is reported as a CONTRADICTION rather than as green. That is
+the shape of *the Band C work shipped while Band C was blocked*, occurring in the
+plan instead of the system.
+
+**An unevaluable gate blocks.** An unrecognised gate kind, a band not in this
+registry, a command gate that was not run: UNKNOWN, never READY. Same rule as an
+unrecognised exit code, same reason.
+
+**An external with no owner does not load.** An external nobody owns is a wish.
+The by-owner list above is the most useful line in the output: it is the set of
+conversations that must happen before anything else moves.
+
+The roadmap is **not kernel** — nothing in it licenses a capability, opens a band
+or waives a control, so `neuraxis drift` does not cover it. See
+[ADR 0008](docs/adr/0008-roadmap-is-a-graph.md).
+
+## Architecture decisions
+
+Eight of them, in [`docs/adr/`](docs/adr/). Each states how it could be wrong,
+and a test enforces that: no Reversal section, no ADR. The short version of why
+the log exists is the same argument as everything else here — a rule with no
+single place it lives is a rule that gets re-litigated.
 
 ## Verifier independence, in full
 

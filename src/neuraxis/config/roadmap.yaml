@@ -1,0 +1,370 @@
+# BST Neuraxis - build sequence as a dependency graph.
+#
+# NOT KERNEL. This file carries no authority: nothing in it licenses a
+# capability, opens a band, or waives a control. Changing it is a plan change,
+# not a ratified kernel change, and `neuraxis drift` does not cover it.
+#
+# What it is for: a roadmap written as prose is a plan an agent has to
+# interpret, and interpretation under schedule pressure is how "blocked on T1"
+# becomes "we'll do T1 after". Here every item states its blockers as machine
+# -evaluable gates, and `neuraxis roadmap` answers *what is actionable now* from
+# the live registry and attestation store rather than from a state somebody
+# typed.
+#
+# Two properties are load-bearing:
+#
+#   1. `state` is a claim; readiness is computed. A shipped item whose gates
+#      are unsatisfied is reported as a CONTRADICTION, because that is the
+#      shape of "we built the Band C work while Band C was blocked".
+#   2. An unevaluable gate BLOCKS. `unknown` never reads as ready, for the
+#      same reason an unrecognised exit code never reads as unblocked.
+
+version: 1
+roadmap: ilr-001-build-sequence
+source: ILR-001-DR Rev A section 3.2, plus this package's own version track
+
+# ---------------------------------------------------------------------------
+# Dependencies owned by someone else. An external with no owner is a wish, so
+# the loader refuses one. Their state is never inferred: `attained: false`
+# stays false until a human changes it here, and every gate naming an
+# unattained external evaluates to BLOCKED.
+# ---------------------------------------------------------------------------
+externals:
+  T1:
+    title: KBS-001 T1 - kernel boundary, append-only evidence sink, external attestation
+    owner: OP-Vily
+    attained: false
+    blocks_because: >-
+      GV-01/02/03/08 are non-compensable (D-06), so every band above B derives
+      its block from T1 rather than from a clause that could drift.
+    note: >-
+      Blocked in turn on two decisions that are not Claude's to take: repository
+      visibility (KBS-001 D-08) and identity issuance, which mints a credential
+      on the owner's account.
+  T3:
+    title: Canonical Lesson contract source
+    owner: OP-Vily
+    attained: false
+    blocks_because: The v0.4 loop contracts cannot be written against a schema that does not exist.
+  T4:
+    title: Weakness Signal contract source
+    owner: OP-Vily
+    attained: false
+    blocks_because: Same as T3.
+  E-13:
+    title: Kill-switch drill procedure
+    owner: OP-Vily
+    attained: false
+    blocks_because: GV-10's provider would audit a drill nobody runs, which is the vacuous probe.
+  L0-ENTRY-POINTS:
+    title: Five conforming L0 entry points, one per D-03 blocking event
+    owner: L0
+    attained: false
+    blocks_because: >-
+      ILR-001-DR section 3.3's freeze lifts when W9 and W2 are live, and both are
+      specified at lease issuance. D-07 published the contract; the entry points
+      are L0's to build.
+    verify: ["neuraxis", "caller-conform", "--", "<entry point argv>"]
+  DEPLOY-TARGET:
+    title: A host that can run the assurance schedule
+    owner: OP-Vily
+    attained: false
+    blocks_because: >-
+      attestation_max_age is 24h and global, so every band closes a day after
+      its last attestation. The schedule is part of the system, not the ops
+      around it.
+  BST-SA-WORKSTREAM:
+    title: A named BST-SA workstream to gate end to end
+    owner: OP-Vily
+    attained: false
+    blocks_because: >-
+      The v1.0 claim is a workstream actually running under the gate. Nothing
+      here can nominate one.
+
+# ---------------------------------------------------------------------------
+# The freeze. Stated here so its lift condition is a check rather than a memory.
+# ---------------------------------------------------------------------------
+freeze:
+  id: ILR-001-DR-3.3
+  in_force: true
+  prohibits:
+    - New tool leases or scope widenings to any agent
+    - Band transitions
+    - Self-modification of any kind, including changes a team would classify as configuration
+    - Verifier assignments where performer and verifier share a principal or an envelope
+  permits: Capability work inside an already-attested envelope, which is D-03's whole point
+  lifts_when:
+    - kind: item
+      id: W9
+    - kind: item
+      id: W2
+  operative_definition: >-
+    Each of D-03's five blocking events has an L0 entry point, and each of those
+    entry points passes `neuraxis caller-conform`. Five conforming entry points -
+    not four, and not one tested five times.
+
+# ---------------------------------------------------------------------------
+# Gate kinds:
+#   band_attained    - resolved against the live registry + attestations
+#   control_attested - resolved against the live attestation store
+#   item             - another roadmap item must be shipped
+#   external         - an external dependency; unattained => BLOCKED
+#   command          - argv; exit 0 satisfies. Only run under --check
+# ---------------------------------------------------------------------------
+items:
+  - id: W9
+    title: Verifier-independence deny rule
+    register_ref: section 3.2 Stage 0
+    score: 4.80
+    state: partial
+    owner: neuraxis
+    shipped_in: [v0.6.0, v0.8.0, v0.12.0]
+    remaining:
+      - The third clause, *is controlled by it*, needs a principal graph that
+        does not exist until T1 issues real identities. Its absence is asserted
+        by a test so adding it must be deliberate.
+      - The deny rule runs when something calls the gate. At lease issuance that
+        is L0-ENTRY-POINTS.
+    gates:
+      - kind: external
+        id: T1
+      - kind: external
+        id: L0-ENTRY-POINTS
+    acceptance:
+      - kind: command
+        run: ["neuraxis", "caller-conform", "--", "python", "examples/conforming_caller.py"]
+        proves: A caller driven through every decision refuses on all of them.
+
+  - id: W1
+    title: KBS-001 T1 kernel boundary (GV-01/02/03/08)
+    register_ref: section 3.2 Stage 1
+    score: 4.60
+    state: blocked
+    owner: OP-Vily
+    gates:
+      - kind: external
+        id: T1
+    note: >-
+      Every week this slips costs evidence permanently rather than late:
+      records written before the immutable sink exists cannot be retroactively
+      attested, and Band F needs them.
+
+  - id: W2
+    title: Capability-Authority Gate as denying L0 config
+    register_ref: section 3.2 Stage 2
+    score: 4.60
+    state: partial
+    owner: neuraxis
+    shipped_in: [v0.8.0, v0.9.0, v0.13.0]
+    remaining:
+      - Deny-on-missing-attestation, the monotonicity invariant and expiring
+        waivers all ship. What does not is the half that runs at lease issuance.
+    gates:
+      - kind: external
+        id: L0-ENTRY-POINTS
+    acceptance:
+      - kind: command
+        run: ["neuraxis", "validate"]
+        proves: The matrix loads with its invariants intact, or it does not load.
+
+  - id: W6a
+    title: IL-27 Self-Explaining
+    register_ref: section 3.2 Stage 3 (assurance track)
+    score: 4.20
+    state: planned
+    owner: neuraxis
+    gates:
+      - kind: external
+        id: T1
+    note: >-
+      Cheapest of the four assurance capabilities, and every audit and client
+      claim downstream is built on a system that can state why it did something.
+
+  - id: W6b
+    title: IL-24 Self-Auditing
+    register_ref: section 3.2 Stage 3 (assurance track)
+    score: 3.80
+    state: planned
+    owner: neuraxis
+    gates:
+      - kind: item
+        id: W6a
+      - kind: external
+        id: T1
+    note: What turns the evidence sink into an assurance capability.
+
+  - id: W8
+    title: The decision register as machine-readable config
+    register_ref: section 3.2 Stage 2
+    score: 3.65
+    state: planned
+    owner: neuraxis
+    gates: []
+    note: >-
+      Schedulable now - it was never blocked on T1. Rulings, reversal triggers
+      and the waiver schema as versioned YAML, so a trigger firing is detectable
+      rather than remembered. This file is the same move applied to the build
+      sequence, and is the obvious template.
+
+  - id: W4
+    title: Close Band D (coordination)
+    register_ref: section 3.2 Stage 3 (capability track)
+    score: 3.35
+    state: blocked
+    owner: neuraxis
+    gates:
+      - kind: band_attained
+        id: BAND-C
+    note: >-
+      Deliberately before W3. BST's observed failure mode is coordination, not
+      learning; learning layered on unresolved coordination produces per-agent
+      drift the coordination layer then has to reconcile.
+
+  - id: W6c
+    title: IL-26 Self-Securing
+    register_ref: section 3.2 Stage 4
+    score: 3.35
+    state: planned
+    owner: neuraxis
+    gates:
+      - kind: item
+        id: W6b
+
+  - id: W3
+    title: Close Band C (learning)
+    register_ref: section 3.2 Stage 3 (capability track)
+    score: 3.00
+    state: blocked
+    owner: neuraxis
+    gates:
+      - kind: external
+        id: T1
+      - kind: item
+        id: W2
+    note: Carries IL-13a, which cannot be admitted until W2 enforces the envelope.
+
+  - id: W6d
+    title: IL-25 Self-Governing
+    register_ref: section 3.2 Stage 4
+    score: 2.55
+    state: planned
+    owner: neuraxis
+    gates:
+      - kind: item
+        id: W6c
+    note: Last within Band F - the closest thing to authority delegation.
+
+  - id: W5
+    title: Band E
+    register_ref: section 3.2 Stage 5
+    score: 2.00
+    state: deferred
+    owner: neuraxis
+    gates:
+      - kind: band_attained
+        id: BAND-D
+    note: Lowest weighted benefit. Revisit after D closes.
+
+  - id: W7
+    title: Band G
+    register_ref: section 3.2 Stage 5
+    state: blocked
+    owner: neuraxis
+    gates:
+      - kind: band_attained
+        id: BAND-F
+      - kind: control_attested
+        id: GV-01
+      - kind: control_attested
+        id: GV-02
+      - kind: control_attested
+        id: GV-03
+      - kind: control_attested
+        id: GV-04
+      - kind: control_attested
+        id: GV-05
+      - kind: control_attested
+        id: GV-06
+      - kind: control_attested
+        id: GV-07
+      - kind: control_attested
+        id: GV-08
+      - kind: control_attested
+        id: GV-09
+      - kind: control_attested
+        id: GV-10
+    note: >-
+      Not scheduled. IL-32 Self-Evolving is never independently enabled under
+      any band state - there is no safe interval in which a system evolves
+      itself before governance arrives.
+
+  # ---- this package's own track -------------------------------------------
+
+  - id: PKG-ASSURE
+    title: The recurring assurance run
+    score: null
+    state: blocked
+    owner: OP-Vily
+    gates:
+      - kind: external
+        id: DEPLOY-TARGET
+    note: >-
+      Load-bearing, not optional. Without it Neuraxis denies everything within a
+      day, which is correct behaviour and still an outage.
+
+  - id: PKG-LOOP-CONTRACTS
+    title: v0.4 remainder - Canonical Lesson, Weakness Signal, Ratified Change
+    score: null
+    state: blocked
+    owner: neuraxis
+    shipped_in: [v0.7.0]
+    remaining:
+      - Evidence Record shipped as v0.7.0. The other three wait on their schemas.
+    gates:
+      - kind: external
+        id: T3
+      - kind: external
+        id: T4
+
+  - id: PKG-GV-01-03-08
+    title: Providers for GV-01, GV-03, GV-08
+    score: null
+    state: blocked
+    owner: neuraxis
+    gates:
+      - kind: external
+        id: T1
+    note: Written by the external assurance account, and provable before trust via `neuraxis conform`.
+
+  - id: PKG-GV-05-09
+    title: Providers for GV-05 and GV-09
+    score: null
+    state: blocked
+    owner: neuraxis
+    gates:
+      - kind: item
+        id: PKG-LOOP-CONTRACTS
+
+  - id: PKG-GV-10
+    title: Provider for GV-10 kill-switch
+    score: null
+    state: blocked
+    owner: neuraxis
+    gates:
+      - kind: external
+        id: E-13
+
+  - id: PKG-V1
+    title: v1.0 - one BST-SA workstream gated end to end
+    score: null
+    state: blocked
+    owner: OP-Vily
+    gates:
+      - kind: external
+        id: BST-SA-WORKSTREAM
+      - kind: band_attained
+        id: BAND-A
+    note: >-
+      Deliberately not tagged while zero bands are attainable. A 1.0 is read as
+      a claim about the system, and declaring one here would be the ordinal
+      attainment claim D-02 prohibits wearing different clothes.

@@ -52,6 +52,7 @@ from .model import (
 from .providers import ProviderOutcome, get_provider, providers_for, run_provider
 from .providers.registry import UnknownProviderError, coverage
 from .registry import load_registry, parse_duration, registry_digest
+from .roadmap import BLOCKED, READY, UNKNOWN, RoadmapError, load_roadmap
 from .resolver import BandResolver
 from .scorecard import measure
 from .waiver import Waiver, WaiverRegister
@@ -397,6 +398,128 @@ def cmd_caller_conform(args: argparse.Namespace) -> int:
 
     _emit(report.to_dict(), as_json=args.json, text="\n".join(lines))
     return EXIT_OK if report.conforms else EXIT_BY_DECISION[Decision.DENY]
+
+
+def cmd_roadmap(args: argparse.Namespace) -> int:
+    """What is actionable now, and why everything else is not.
+
+    The roadmap is a dependency graph rather than a list, for the reason D-02
+    made the capability index one: a numbered list is read as a permission to
+    proceed down it. Readiness is resolved against the live registry and
+    attestation store, so nothing here can report an item ready because
+    somebody edited a status column.
+
+    Exit 10 when the freeze is in force or an item contradicts itself. Neither
+    is an error -- both are states a caller should be able to block on.
+    """
+    try:
+        roadmap = load_roadmap(args.roadmap_file)
+    except RoadmapError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    registry: Any | None = None
+    store: AttestationStore | None = None
+    try:
+        registry, store = _load(args)
+    except NeuraxisError as exc:
+        # A roadmap is readable without them; every gate that needed them is
+        # UNKNOWN, and UNKNOWN blocks. Saying so beats a silent half-answer.
+        print(f"note: resolving without the gate ({exc})", file=sys.stderr)
+
+    report = roadmap.resolve(
+        registry, store, run_commands=args.check, timeout=float(args.timeout)
+    )
+
+    if args.item:
+        one = next((r for r in report.items if r.item.id == args.item), None)
+        if one is None:
+            print(f"error: no item {args.item} in {roadmap.name}", file=sys.stderr)
+            return EXIT_ERROR
+        lines = [
+            f"{one.item.id}  {one.item.title}",
+            f"  state:   {one.item.state}"
+            + (f"  (shipped in {', '.join(one.item.shipped_in)})" if one.item.shipped_in else ""),
+            f"  owner:   {one.item.owner}",
+            f"  score:   {f'{one.item.score:.2f}' if one.item.score is not None else '-'}"
+            + (f"   {one.item.register_ref}" if one.item.register_ref else ""),
+            f"  verdict: {one.verdict}",
+        ]
+        if one.item.gates:
+            lines.append("  gates:")
+            lines += [
+                f"    {g.verdict:<8} {g.gate.describe()} - {g.detail}" for g in one.gates
+            ]
+        if one.acceptance:
+            lines.append("  acceptance:")
+            lines += [
+                f"    {a.verdict:<8} `{' '.join(a.gate.run)}` - {a.detail}"
+                for a in one.acceptance
+            ]
+        for text in one.item.remaining:
+            lines.append(f"  remaining: {text}")
+        if one.item.note:
+            lines.append(f"  note: {one.item.note}")
+        if one.contradiction:
+            lines.append(f"  CONTRADICTION: {one.contradiction}")
+        _emit(one.to_dict(), as_json=args.json, text="\n".join(lines))
+        return EXIT_OK if one.verdict == READY else EXIT_BY_DECISION[Decision.DENY]
+
+    actionable = report.actionable
+    lines = [f"{roadmap.name}   {len(report.items)} items, {len(roadmap.externals)} externals", ""]
+    lines.append("ACTIONABLE NOW" if actionable else "NOTHING IS ACTIONABLE")
+    for r in actionable:
+        score = f"{r.item.score:.2f}" if r.item.score is not None else "  - "
+        lines.append(f"  {score}  {r.item.id:<18} {r.item.title}  [{r.item.owner}]")
+    if not actionable:
+        lines.append("  Every item waits on something. The blockers are below.")
+
+    if not args.next_only:
+        lines += ["", "BLOCKED"]
+        for r in report.items:
+            if r.actionable or r.item.claims_done:
+                continue
+            blockers = ", ".join(g.gate.describe() for g in r.blockers) or "-"
+            lines.append(f"  {r.verdict:<8} {r.item.id:<18} waits on {blockers}")
+
+        owed: dict[str, list[str]] = {}
+        for ext in roadmap.externals.values():
+            if not ext.attained:
+                owed.setdefault(ext.owner, []).append(ext.id)
+        if owed:
+            lines += ["", "EXTERNALS, BY OWNER"]
+            for owner, ids in sorted(owed.items()):
+                lines.append(f"  {owner:<12} {', '.join(sorted(ids))}")
+
+    if report.contradictions:
+        lines += ["", "CONTRADICTIONS"]
+        lines += [f"  {r.item.id}: {r.contradiction}" for r in report.contradictions]
+
+    if report.freeze_in_force:
+        lines += ["", f"FREEZE IN FORCE ({roadmap.freeze.get('id', 'unnamed')})"]
+        lines += [f"  - {reason}" for reason in report.freeze_reasons]
+        definition = str(roadmap.freeze.get("operative_definition", "")).strip()
+        if definition:
+            lines.append(f"  lifts when: {definition}")
+
+    if not args.check:
+        pending = sum(len(r.item.acceptance_commands) for r in report.items if r.item.has_shipped)
+        pending += sum(
+            1 for r in report.items for g in r.gates if g.gate.kind == "command"
+        )
+        if pending:
+            lines += [
+                "",
+                f"NOTE: {pending} command(s) were not run - {len(report.contradictions)} "
+                "contradiction(s) reported without them. Pass --check to run the command "
+                "gates and the acceptance checks on shipped work; until then a command gate "
+                "is UNKNOWN, and UNKNOWN blocks.",
+            ]
+
+    _emit(report.to_dict(), as_json=args.json, text="\n".join(lines))
+    if report.contradictions or report.freeze_in_force:
+        return EXIT_BY_DECISION[Decision.DENY]
+    return EXIT_OK
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -1139,6 +1262,24 @@ def build_parser() -> argparse.ArgumentParser:
              "than a command line, for the reason `conform` gives",
     )
     p.set_defaults(func=cmd_caller_conform)
+
+    p = sub.add_parser(
+        "roadmap", help="what is actionable now, resolved against the live gate"
+    )
+    p.add_argument("--roadmap", default=None, dest="roadmap_file", help="path to roadmap.yaml")
+    p.add_argument(
+        "--next", action="store_true", dest="next_only",
+        help="only the items whose every gate is satisfied, highest register score first",
+    )
+    p.add_argument(
+        "--item", default=None, help="one item, with every gate and why each holds or does not",
+    )
+    p.add_argument(
+        "--check", action="store_true",
+        help="also run command gates. They are skipped by default, and a skipped gate blocks",
+    )
+    p.add_argument("--timeout", default=60.0, type=float, help="seconds per command gate")
+    p.set_defaults(func=cmd_roadmap)
 
     p = sub.add_parser("status", help="band attainment against current attestations")
     p.set_defaults(func=cmd_status)

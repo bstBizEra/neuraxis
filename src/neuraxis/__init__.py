@@ -80,11 +80,21 @@ from .providers import (
     run_provider,
 )
 from .registry import Registry, load_registry
+from .roadmap import (
+    Gate,
+    GateResult,
+    ItemReadiness,
+    Roadmap,
+    RoadmapError,
+    RoadmapItem,
+    RoadmapReport,
+    load_roadmap,
+)
 from .resolver import BandResolver
 from .scorecard import Scorecard, measure
 from .waiver import Waiver, WaiverPolicy, WaiverRegister
 
-__version__ = "0.13.0"
+__version__ = "0.14.0"
 FRAMEWORK = "bst-neuraxis"
 PRINCIPLE = "governed-evolution"
 
@@ -131,6 +141,10 @@ __all__ = [
     "Registry",
     "RegistryError",
     "Risk",
+    "Roadmap",
+    "RoadmapError",
+    "RoadmapItem",
+    "RoadmapReport",
     "ScenarioResult",
     "Scorecard",
     "UnknownCapabilityError",
@@ -148,6 +162,7 @@ __all__ = [
     "audit_obligations",
     "get_provider",
     "load_registry",
+    "load_roadmap",
     "measure",
     "providers_for",
     "record_decision",
