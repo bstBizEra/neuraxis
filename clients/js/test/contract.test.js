@@ -215,3 +215,64 @@ test("a value inside a request cannot become a command", async () => {
   });
   assert.ok(["ALLOW", "DENY"].includes(verdict.decision));
 });
+
+// ---- D-07: a caller of this client must be conformance-testable --------
+
+test("the gate is resolved from the environment when the caller has not said", async () => {
+  // This is what lets `neuraxis caller-conform` drive a Node caller through
+  // decisions it could not otherwise arrange. A client that could only be
+  // pointed at a hard-coded path could never be tested against a DENY.
+  const fake = fakeCli({ stdout: JSON.stringify({ decision: "DENY", capability: "IL-06" }), code: 10 });
+  const previousBin = process.env.NEURAXIS_BIN;
+  const previousArgs = process.env.NEURAXIS_BIN_ARGS;
+  process.env.NEURAXIS_BIN = fake.bin;
+  process.env.NEURAXIS_BIN_ARGS = JSON.stringify(fake.binArgs);
+  try {
+    const verdict = await createClient({}).check(VALID_REQUEST);
+    assert.equal(verdict.decision, "DENY");
+  } finally {
+    if (previousBin === undefined) delete process.env.NEURAXIS_BIN;
+    else process.env.NEURAXIS_BIN = previousBin;
+    if (previousArgs === undefined) delete process.env.NEURAXIS_BIN_ARGS;
+    else process.env.NEURAXIS_BIN_ARGS = previousArgs;
+  }
+});
+
+test("an explicit bin beats the environment", async () => {
+  const previousBin = process.env.NEURAXIS_BIN;
+  process.env.NEURAXIS_BIN = "/definitely/not/a/gate";
+  const fake = fakeCli({ stdout: JSON.stringify({ decision: "DENY", capability: "IL-06" }), code: 10 });
+  try {
+    const verdict = await createClient(fake).check(VALID_REQUEST);
+    assert.equal(verdict.decision, "DENY");
+  } finally {
+    if (previousBin === undefined) delete process.env.NEURAXIS_BIN;
+    else process.env.NEURAXIS_BIN = previousBin;
+  }
+});
+
+test("a malformed NEURAXIS_BIN_ARGS fails at construction, not at the first grant", () => {
+  const previous = process.env.NEURAXIS_BIN_ARGS;
+  process.env.NEURAXIS_BIN_ARGS = "not json";
+  try {
+    assert.throws(() => createClient({}), NeuraxisError);
+  } finally {
+    if (previous === undefined) delete process.env.NEURAXIS_BIN_ARGS;
+    else process.env.NEURAXIS_BIN_ARGS = previous;
+  }
+});
+
+test("a verdict carries its verdict_id, so a lease can be joined to what licensed it", async () => {
+  const fake = fakeCli({
+    stdout: JSON.stringify({ decision: "ALLOW", capability: "IL-06", verdict_id: "514e47ce66dbc807" }),
+    code: 0,
+  });
+  const verdict = await createClient(fake).require(VALID_REQUEST);
+  assert.equal(verdict.verdictId, "514e47ce66dbc807");
+});
+
+test("a verdict recorded without an evidence sink reports no id rather than undefined", async () => {
+  const fake = fakeCli({ stdout: JSON.stringify({ decision: "ALLOW", capability: "IL-06" }), code: 0 });
+  const verdict = await createClient(fake).require(VALID_REQUEST);
+  assert.equal(verdict.verdictId, null);
+});

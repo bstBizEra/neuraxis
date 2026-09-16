@@ -1,6 +1,6 @@
 # neuraxis — Roadmap
 
-**Current:** v0.12.0 - W9's envelope clause: a verifier may not hold authority over what it verifies. 4 of 10 controls wired, on an unauthenticated substrate until T1. 582 Python tests + 19 JS contract tests.
+**Current:** v0.13.0 - D-07: L0 calls this CLI at every authority grant, and `caller-conform` proves a caller acts on the answer. 4 of 10 controls wired, on an unauthenticated substrate until T1. 606 Python tests + 24 JS contract tests.
 **To:** v1.0 (operational governance layer for BST-SA)
 **Governing constraint:** one task at a time, CI green = done.
 
@@ -17,6 +17,7 @@
 | v0.9.0 bounded self-tuning (D-01) | **shipped** |
 | v0.10.0 drift check + operator runbook | **shipped** |
 | v0.12.0 W9 envelope clause | **shipped** |
+| v0.13.0 L0 integration contract (D-07) | **shipped** |
 | v0.6 service mode | not until a caller needs it |
 | v0.11.0 conformance suite | **shipped** |
 | v1.0 hardening | **all four items shipped** (v0.6.0 review, threat model, v0.10.0 runbook, v0.11.0 conformance suite). **Deliberately not tagged v1.0** while zero bands are attainable — see the v1.0 section |
@@ -594,6 +595,87 @@ wearing different clothes.
 
 v1.0 is earned when a band can actually open - not when the package's own
 checklist runs out.
+
+---
+
+## v0.13.0 - the L0 integration contract (D-07) - SHIPPED
+
+v0.12.0 closed with the observation that W9 was two-thirds enforced and that
+**the freeze in ILR-001-DR §3.3 was unaffected**, because W9 and W2 are both
+specified *at lease issuance* - L0's half, not this package's. The open question
+was what shape that half should take.
+
+**Ruling D-07: L0 shells out to `neuraxis gate`.** Four shapes were on the
+table - an in-process import, an HTTP service, a generated static policy file,
+and the CLI. The CLI wins for one reason worth keeping visible: it needs no new
+gate code, so it is the only option where the freeze lifts on work L0 does
+rather than work this package does. The contract exists, the Node client wraps
+it, and `neuraxis contract` publishes the decision table so nothing on the far
+side holds a copy that can go stale.
+
+**And it moves the entire enforcement burden across a process boundary.** This
+package can return DENY perfectly and license nothing, because the thing issuing
+the lease is elsewhere, written by someone else, on the far side of an exit
+code. So the deliverable here is not gate code. It is
+[`docs/L0-LEASE-GATE-CONTRACT.md`](L0-LEASE-GATE-CONTRACT.md), plus a suite that
+fails when a caller gets it wrong.
+
+### `neuraxis caller-conform`
+
+The mirror of `conform`. A caller is an executable that issues one lease; the
+suite substitutes a scripted gate through `NEURAXIS_BIN` / `NEURAXIS_BIN_ARGS`
+and drives it through ten scenarios and two cross-cutting checks. `escalate`,
+`wait_for_authority` and `delegate` turn the README's standing warning - *test
+for zero, not for a code list* - from a sentence into three failing scenarios.
+
+Two checks are read from what reached the gate rather than from what the caller
+returned:
+
+- **`called`** - the caller invoked the gate in every scenario. A cached ALLOW,
+  a fast path for renewals, a widening that reuses the original decision: none
+  is visible in an exit code, and each is the D-03 bypass.
+- **`fidelity`** - the object that reached the gate carries the same values the
+  caller was handed, parsed with the gate's own `AuthorityRequest.from_dict`
+  rather than a second copy of the rules.
+
+**`fidelity` is why the suite earns its place.** The reference request names
+`agent-motor` as both performer and its own verifier, so a faithful caller gets
+a DENY. A caller that drops `verifier` gets an ALLOW - and nothing between the
+two reports an error. No log line, no exception, no failing test anyone would
+have thought to write. W9 is the highest-ranked item in the register and it is
+switched off by a dict comprehension.
+
+`examples/credulous_caller.py` ships for the reason `vacuous_source.py` does. It
+calls the gate, checks the result, and blocks on DENY; its author would test it
+against a DENY, watch it refuse, and ship it. It fails eight checks.
+
+### The Node client is now conformance-ready by default
+
+`createClient` resolves the gate from `NEURAXIS_BIN` / `NEURAXIS_BIN_ARGS` when
+it is not told otherwise, and a malformed value throws at construction rather
+than silently becoming a different binary. A client that could only be pointed
+at a hard-coded path could never be driven through a DENY it did not arrange
+itself. `clients/js/examples/issue_lease.mjs` is the reference Node caller and
+passes all twelve checks - most of the contract was already implemented inside
+`require()`, because it was written against the same contract.
+
+Verdicts now carry `verdictId`, which §8 of the contract asks L0 to record on
+the lease. Without it GV-02 can show every lease was issued by someone other
+than its principal and still not show that any of them passed the gate.
+
+### What lifts the freeze, stated so it is not a judgement call
+
+> Each of D-03's five blocking events has an L0 entry point, and each of those
+> entry points passes `neuraxis caller-conform`.
+
+Five conforming entry points. Not four, and not one tested five times. The five
+are published under `caller.blocking_events` in `neuraxis contract --json`, so
+the count cannot be quietly rounded down. `lease_widen` is the one that gets
+missed: a widening is a fresh grant arriving through a path that already holds
+a valid lease, which is exactly why it feels like it does not need asking.
+
+**T1 is unaffected.** Everything above still sits on an unauthenticated
+substrate, and Bands C+ remain blocked on it via D-06.
 
 ---
 

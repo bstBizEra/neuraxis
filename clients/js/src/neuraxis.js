@@ -76,6 +76,10 @@ function normaliseVerdict(raw) {
     obligations: Object.freeze(raw.obligations ?? []),
     missingControls: Object.freeze(raw.missing_controls ?? []),
     evaluatedAt: raw.evaluated_at ?? null,
+    // Present when the CLI was given --evidence-sink. D-07 section 8: without
+    // it there is no join between a lease and the decision that licensed it,
+    // so a caller recording leases must carry it through.
+    verdictId: raw.verdict_id ?? null,
     get permitsAction() {
       return raw.decision === PERMITTING_DECISION;
     },
@@ -83,10 +87,36 @@ function normaliseVerdict(raw) {
 }
 
 /**
+ * Where the gate lives, when the caller has not said.
+ *
+ * Reading these from the environment is what makes a Node caller testable: the
+ * D-07 caller-conformance suite substitutes a scripted gate through exactly
+ * these two variables, and a client that could only be pointed at a hard-coded
+ * path could never be driven through a DENY it did not arrange itself.
+ * Explicit options win, so nothing here overrides a caller that knows better.
+ */
+function fromEnvironment(env) {
+  const raw = (env.NEURAXIS_BIN_ARGS || "").trim();
+  if (!raw) return { bin: env.NEURAXIS_BIN, binArgs: undefined };
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (cause) {
+    // Fail at construction. A malformed value here silently becomes "no
+    // leading arguments", which is a different binary than the one intended.
+    throw new NeuraxisError("NEURAXIS_BIN_ARGS is not valid JSON", { cause });
+  }
+  if (!Array.isArray(parsed)) throw new NeuraxisError("NEURAXIS_BIN_ARGS must be a JSON array");
+  return { bin: env.NEURAXIS_BIN, binArgs: parsed.map(String) };
+}
+
+/**
  * @param {object} options
- * @param {string} [options.bin="neuraxis"]   Path to the CLI executable.
- * @param {string[]} [options.binArgs=[]]     Args before the neuraxis args, e.g.
- *                                            `{bin: "python", binArgs: ["-m", "neuraxis"]}`.
+ * @param {string} [options.bin]               Path to the CLI executable. Defaults to
+ *                                             `NEURAXIS_BIN`, then `"neuraxis"`.
+ * @param {string[]} [options.binArgs]         Args before the neuraxis args, e.g.
+ *                                             `{bin: "python", binArgs: ["-m", "neuraxis"]}`.
+ *                                             Defaults to `NEURAXIS_BIN_ARGS` (a JSON array).
  * @param {string} [options.attestations]     Attestation JSONL path.
  * @param {string} [options.registry]         Registry path; omit for the bundled kernel copy.
  * @param {string} [options.taskLog]          Task log for the verifier-independence provider.
@@ -95,9 +125,10 @@ function normaliseVerdict(raw) {
  * @param {object} [options.env]              Environment for the CLI.
  */
 export function createClient(options = {}) {
+  const fallback = fromEnvironment(process.env ?? {});
   const {
-    bin = "neuraxis",
-    binArgs = [],
+    bin = fallback.bin || "neuraxis",
+    binArgs = fallback.binArgs || [],
     attestations,
     registry,
     taskLog,

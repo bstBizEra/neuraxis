@@ -176,3 +176,16 @@ treating a conformance report as trust.
 
 The thing that would make it trust is the same thing as everywhere else in this
 package: KBS-001 T1, an authenticated source and a sink nobody can rewrite.
+
+---
+
+## The other end of the same contract
+
+This document is about an attestation **source** — something the gate reads.
+Its mirror is [`L0-LEASE-GATE-CONTRACT.md`](L0-LEASE-GATE-CONTRACT.md), about a
+gate **caller** — something that acts on what the gate returns — with its own
+black-box suite, `neuraxis caller-conform`.
+
+The two failures rhyme. A source that cannot fail is not a check; a caller that
+cannot refuse is not a gate client. Both pass every test their authors would
+think to write.

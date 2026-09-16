@@ -1,6 +1,6 @@
 {
   "name": "@bst/neuraxis-client",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Node client for the BST Neuraxis governance gate (ILR-001)",
   "type": "module",
   "main": "src/neuraxis.js",
