@@ -198,13 +198,18 @@ rulings:
     reversal:
       trigger: KBS-001's scope changes so that T1 no longer implements all four controls
       fallback: Re-derive from the matrix. There is no waiver path
+      owner: OP-Vily
+      review: on any KBS-001 scope change
       detector:
         kind: by_construction
         why: >-
           The block derives from the matrix - Band C requires GV-01/02/03/08,
           T1 implements them, therefore Band C is blocked until T1 lands. There
           is no separate clause that could drift out of sync, so there is
-          nothing for a detector to watch.
+          nothing for a detector to watch. The claim that it cannot fire is
+          itself a claim: it stops being true the moment T1's scope changes,
+          which is a decision taken outside this repository, which is why it
+          still carries an owner.
 
   D-07:
     title: How the enforcement layer reaches the gate

@@ -200,7 +200,9 @@ items:
     state: shipped
     owner: neuraxis
     shipped_in: [v0.15.0]
-    gates: []
+    ungated_because: >-
+      A document revision. Nothing gates it; its acceptance command is the
+      test that pins the document to the registry.
     acceptance:
       - kind: command
         run: ["python", "-m", "pytest", "-q", "tests/test_ilr001.py"]
@@ -221,7 +223,9 @@ items:
     state: shipped
     owner: neuraxis
     shipped_in: [v0.16.0]
-    gates: []
+    ungated_because: >-
+      Never blocked on anything. It is this package's own config, and its
+      acceptance command is what shows it still holds.
     acceptance:
       - kind: command
         run: ["neuraxis", "register", "--check"]

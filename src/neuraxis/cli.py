@@ -52,7 +52,7 @@ from .model import (
 from .providers import ProviderOutcome, get_provider, providers_for, run_provider
 from .providers.registry import UnknownProviderError, coverage
 from .registry import load_registry, parse_duration, registry_digest
-from .register import ARMED, RegisterError, UNRUN, WATCHED, load_register
+from .register import ARMED, SEALED, RegisterError, UNRUN, WATCHED, load_register
 from .roadmap import BLOCKED, READY, UNKNOWN, RoadmapError, load_roadmap
 from .resolver import BandResolver
 from .scorecard import measure
@@ -569,7 +569,8 @@ def cmd_register(args: argparse.Namespace) -> int:
             if e.note:
                 lines.append(f"      {e.note}")
         if one.missing:
-            lines.append(f"  MISSING from the registry: {', '.join(one.missing)}")
+            label = "UNCHECKED (no registry supplied)" if one.unchecked else "MISSING from the registry"
+            lines.append(f"  {label}: {', '.join(one.missing)}")
         if r.reversal:
             lines.append(f"  reverses if: {r.reversal.trigger}")
             if r.reversal.fallback:
@@ -598,6 +599,22 @@ def cmd_register(args: argparse.Namespace) -> int:
         lines.append(f"  {st.ruling.id}  {points}")
         if st.missing:
             lines.append(f"        MISSING from the registry: {', '.join(st.missing)}")
+
+    if report.sealed:
+        lines += ["", "SEALED - the trigger cannot fire by construction"]
+        for st in report.sealed:
+            rev = st.ruling.reversal
+            lines.append(f"  {st.ruling.id}  {rev.owner if rev else '-'} ({rev.review if rev else '-'})")
+            lines.append(f"        {st.trigger.detail[:150]}")
+
+    if report.unrun:
+        lines += ["", "NOT RUN - nobody looked"]
+        lines += [f"  {st.ruling.id}  {st.ruling.reversal.trigger[:110]}" for st in report.unrun]
+
+    unchecked = [st for st in report.rulings if st.unchecked]
+    if unchecked:
+        lines += ["", "CAPABILITY ENFORCEMENT UNCHECKED (no registry supplied)"]
+        lines += [f"  {st.ruling.id}  needs {', '.join(st.missing)}" for st in unchecked]
 
     if report.watched:
         lines += ["", "WATCHED BY A PERSON, NOT A MACHINE"]
