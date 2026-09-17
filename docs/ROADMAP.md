@@ -1,6 +1,6 @@
 # neuraxis — Roadmap
 
-**Current:** v0.18.0 — the fifth review, on the fourth review's fixes. They had not closed the class. 4 of 10 controls wired, on an unauthenticated substrate until T1. 747 Python tests + 24 JS contract tests.
+**Current:** v0.19.0 — the watchers audited. Ten findings in the tools that watch our own plan. 4 of 10 controls wired, on an unauthenticated substrate until T1. 769 Python tests + 24 JS contract tests.
 **To:** v1.0 — an operational governance layer for BST-SA.
 **Governing constraint:** one task at a time, CI green = done.
 
@@ -75,6 +75,7 @@ not cover it.
 | v0.16.0 W8 — the register as config | **shipped** |
 | v0.17.0 fourth adversarial review (caller + source suites) | **shipped** |
 | v0.18.0 fifth review — the fourth review's fixes did not hold | **shipped** |
+| v0.19.0 the watchers audited (roadmap + register) | **shipped** |
 | v1.0 hardening | all four items shipped; **deliberately not tagged** while zero bands are attainable — see the v1.0 section |
 
 Ask the tool rather than this table:
@@ -100,6 +101,53 @@ existed the same fact was spread across eleven separate occurrences of the
 phrase *blocked on T1*, and nobody could have told you the count. The useful
 output is now `EXTERNALS, BY OWNER`: it is the list of conversations that have
 to happen before anything else moves.
+
+---
+
+## v0.19.0 — the watchers audited — SHIPPED
+
+Ten confirmed findings in `roadmap.py` and `register.py`, from the same pass that
+produced the caller-suite work. A watcher that reports clear while failing is
+worse than no watcher, because it is trusted.
+
+**Five of the six criticals were the same defect.** The module read a string a
+human typed where its own docstring promised a computed fact.
+
+| Was | Now |
+|---|---|
+| An item with no gates — or with `gates` misspelled — reported READY and sorted to the top of the queue | UNKNOWN unless it states `ungated_because`; unknown keys are a load failure |
+| An item gate read the upstream's declared `state`, so a `shipped`-but-blocked upstream satisfied it and UNKNOWN could not propagate | Reads the computed verdict; UNKNOWN propagates |
+| `NEURAXIS_BIN=/bin/true`, or an `exit 0` script named `neuraxis` on PATH, turned every reversal detector CLEAR | A detector named `neuraxis` runs this package in this interpreter. Nothing is resolved from the environment |
+| `enforced` was True on the default call, because `and known` short-circuits on an empty set | A missing capability list reports `unchecked`, never enforced |
+| `by_construction` returned CLEAR and appeared in neither the armed nor the watched list | A distinct `SEALED` state, with its own section, an owner, a cadence, and a reason that has to be a sentence |
+| `External.verify` was parsed, stored and never run — one edited token opened three items | An external carrying a verifier is UNKNOWN until the verifier has run |
+| A failing acceptance set `contradiction` and left the verdict READY | It blocks |
+| `runs:` for `run:` was discarded in silence; `run: {echo: hi}` iterated the mapping's keys into a different, passing command | Both are load failures |
+| `score: true` became 1.0; the sibling loader had the guard and this one did not | Refused |
+| `version:` was never read, so a newer file ran under older semantics | Refused, the same rule already applied to an unrecognised gate kind |
+
+### One finding was not taken as reported
+
+The review said `partial` items never contradict and proposed widening the check
+to `has_shipped`. Applied verbatim that makes **every honestly-partial item a
+contradiction** — for a `partial` item the gates describe what blocks the
+*remainder*, not what licensed the part already shipped. W9 is exactly that
+shape: three releases in, the rest waiting on T1, nothing anomalous.
+
+So the two halves are checked separately. `shipped` is held to its gates;
+anything that has shipped is held to its **acceptance**, which is what covers
+the part already in the product. Recorded because taking a finding verbatim
+when it is 80% right is its own failure mode.
+
+### And one that could not be fixed by refusing anything
+
+`_resolve` used `hasattr` then `getattr`, which runs every descriptor twice and
+which a module-level `__getattr__` — the standard deprecation-shim pattern —
+satisfies for any name at all. That would have made the register's only real
+invariant vacuous the day one was added. It now uses `inspect.getattr_static`,
+and symbols must resolve inside `neuraxis.`: `importlib.import_module` on a
+string from a config file **runs that module**, and `neuraxis register` looks
+like a read-only status command.
 
 ---
 

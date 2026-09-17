@@ -34,9 +34,8 @@ floor in this YAML would re-create precisely the bug that ADR fixed.
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
-import os
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -52,6 +51,8 @@ from .model import now_utc
 __all__ = [
     "ARMED",
     "CLEAR",
+    "SEALED",
+    "UNRUN",
     "WATCHED",
     "DecisionRegister",
     "Enforcement",
@@ -72,48 +73,48 @@ ARMED = "ARMED"
 CLEAR = "CLEAR"
 WATCHED = "WATCHED"
 UNRUN = "NOT RUN"
+#: A trigger whose own structure prevents it firing. Distinct from CLEAR --
+#: CLEAR means a detector looked and saw nothing; SEALED means nothing looked
+#: because nothing could fire. It used to report CLEAR and appear in neither
+#: the armed nor the watched list, which made deleting `owner`/`review` and
+#: writing `detector: {kind: by_construction, why: "."}` the cheapest way to
+#: remove an inconvenient trigger from every list in the report.
+SEALED = "SEALED"
 
 _DETECTOR_KINDS = ("command", "by_construction")
 
-#: Run this package's CLI without depending on a PATH entry.
+#: A `why` shorter than this, or matching one of these, is not a reason.
+_MIN_WHY = 40
+_EMPTY_WHY = frozenset({"", "todo", "n/a", "na", "none", "obvious", "by construction"})
+
+#: Run this package's CLI in this interpreter. Not through PATH, and not
+#: through an environment variable.
 _CLI_SHIM = "import sys; from neuraxis.cli import main; sys.exit(main(sys.argv[1:]))"
 
 
 def _detector_argv(run: Sequence[str]) -> list[str]:
-    """Resolve a detector's command, substituting `neuraxis` rather than
-    hard-coding it.
+    """Resolve a detector's command.
 
-    A detector asks *this* package a question. Spelling the answer as the
-    literal string `neuraxis` makes the detector depend on a PATH entry, and a
-    PATH lookup that misses is not evidence about the register -- it would
-    report a trigger armed because the tool was installed somewhere else. It is
-    also the substitutability problem D-07's own contract identifies, occurring
-    in the thing that watches D-07.
+    A detector named `neuraxis` asks THIS package a question, so it runs in
+    THIS interpreter. Nothing about it is resolved from the environment or from
+    PATH.
 
-    So: `NEURAXIS_BIN` / `NEURAXIS_BIN_ARGS` if set (the same two variables the
-    caller contract uses), then whatever is on PATH, then this interpreter.
+    The previous version resolved `NEURAXIS_BIN` first, then PATH, then the
+    interpreter -- reasoning that a PATH miss is not evidence about the
+    register and should not report a trigger armed. That reasoning is sound for
+    avoiding a false ARM and was applied to a mechanism that manufactures a
+    false CLEAR: `NEURAXIS_BIN=/bin/true`, or a two-line `exit 0` script named
+    `neuraxis` earlier on PATH, turned every detector CLEAR. In a fail-closed
+    system a false CLEAR is strictly worse than a false ARM, and this is the
+    module that watches D-07 reproducing D-07's own substitutability problem.
+
+    A detector naming any other command runs as given; that command is a third
+    party and is the caller's business.
     """
     argv = [str(part) for part in run]
     if not argv or argv[0] != "neuraxis":
         return argv
-    rest = argv[1:]
-    env_bin = os.environ.get("NEURAXIS_BIN")
-    if env_bin:
-        raw = (os.environ.get("NEURAXIS_BIN_ARGS") or "").strip()
-        leading: list[str] = []
-        if raw:
-            try:
-                parsed = json.loads(raw)
-            except ValueError as exc:
-                raise RegisterError(f"NEURAXIS_BIN_ARGS is not valid JSON: {exc}") from None
-            if not isinstance(parsed, list):
-                raise RegisterError("NEURAXIS_BIN_ARGS must be a JSON array")
-            leading = [str(p) for p in parsed]
-        return [env_bin, *leading, *rest]
-    found = shutil.which("neuraxis")
-    if found:
-        return [found, *rest]
-    return [sys.executable, "-c", _CLI_SHIM, *rest]
+    return [sys.executable, "-c", _CLI_SHIM, *argv[1:]]
 
 
 class RegisterError(NeuraxisError):
@@ -147,19 +148,33 @@ def _resolve(ref: str) -> Any:
         raise RegisterError(
             f"{ref!r} is not a symbol reference; use module:name or module:Class.name"
         )
+    if module_name != "neuraxis" and not module_name.startswith("neuraxis."):
+        # `importlib.import_module` on a string from a config file runs that
+        # module. `neuraxis register` looks like a read-only status command and
+        # was the only config in the package that executed code.
+        raise RegisterError(
+            f"{ref}: a ruling's enforcement point must be inside this package. "
+            "Importing a module named in a config file runs it"
+        )
     try:
         obj: Any = importlib.import_module(module_name)
     except ImportError as exc:
         raise RegisterError(f"{ref}: no module {module_name} ({exc})") from None
     walked = module_name
     for part in attr.split("."):
-        if not hasattr(obj, part):
+        # `getattr_static` rather than `hasattr` + `getattr`: the pair ran every
+        # descriptor twice, and a module-level `__getattr__` -- the standard
+        # deprecation-shim pattern -- satisfied any name at all, which would
+        # have made this whole check vacuous the day one was added.
+        try:
+            inspect.getattr_static(obj, part)
+        except AttributeError:
             raise RegisterError(
                 f"{ref}: {walked} has no {part!r}. The enforcement point named by this "
                 "ruling does not exist -- either it was renamed and the ruling is now "
                 "unattached, or it was never built"
-            )
-        obj = getattr(obj, part)
+            ) from None
+        obj = inspect.getattr_static(obj, part)
         walked = f"{walked}.{part}"
     return obj
 
@@ -231,6 +246,9 @@ class RulingStatus:
     enforced: bool
     missing: tuple[str, ...]
     trigger: TriggerState
+    #: True when no capability list was supplied, so the capability half of
+    #: `enforced` could not be evaluated at all.
+    unchecked: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -241,6 +259,7 @@ class RulingStatus:
             "amends_draft": self.ruling.amends_draft,
             "enforcement": [e.describe() for e in self.ruling.enforcement],
             "enforced": self.enforced,
+            "unchecked": self.unchecked,
             "missing": list(self.missing),
             "trigger": self.trigger.to_dict(),
         }
@@ -258,6 +277,15 @@ class RegisterReport:
         return tuple(r for r in self.rulings if r.trigger.armed)
 
     @property
+    def unrun(self) -> tuple[RulingStatus, ...]:
+        """Detectors nobody ran. Not clear; nobody looked."""
+        return tuple(r for r in self.rulings if r.trigger.state == UNRUN)
+
+    @property
+    def sealed(self) -> tuple[RulingStatus, ...]:
+        return tuple(r for r in self.rulings if r.trigger.state == SEALED)
+
+    @property
     def watched(self) -> tuple[RulingStatus, ...]:
         """Triggers no machine can see. The named owner is the whole control."""
         return tuple(r for r in self.rulings if r.trigger.state == WATCHED)
@@ -269,6 +297,8 @@ class RegisterReport:
             "evaluated_at": self.evaluated_at.isoformat(),
             "armed": [r.ruling.id for r in self.armed],
             "watched": [r.ruling.id for r in self.watched],
+            "sealed": [r.ruling.id for r in self.sealed],
+            "not_run": [r.ruling.id for r in self.unrun],
             "rulings": [r.to_dict() for r in self.rulings],
         }
 
@@ -294,16 +324,26 @@ class DecisionRegister:
         known = set(capabilities)
         statuses: list[RulingStatus] = []
         for ruling in self.rulings.values():
-            missing = tuple(
-                e.capability
-                for e in ruling.enforcement
-                if e.capability and known and e.capability not in known
-            )
+            wanted = tuple(e.capability for e in ruling.enforcement if e.capability)
+            if wanted and not known:
+                # `and known` used to short-circuit on an empty set, so the
+                # DEFAULT call -- no capability list, which is what a caller
+                # whose registry failed to load passes -- reported every ruling
+                # enforced. Supplying nothing read as "everything present"
+                # while supplying the WRONG list read as missing: the failure
+                # mode exactly backwards. Not recognised must never resolve to
+                # no objection.
+                missing = wanted
+                unchecked = True
+            else:
+                missing = tuple(c for c in wanted if c not in known)
+                unchecked = False
             statuses.append(
                 RulingStatus(
                     ruling=ruling,
-                    enforced=not missing,
+                    enforced=not missing and not unchecked,
                     missing=missing,
+                    unchecked=unchecked,
                     trigger=self._trigger(ruling, run_detectors, timeout),
                 )
             )
@@ -323,9 +363,7 @@ class DecisionRegister:
                 f"watched by {rev.owner} ({rev.review or 'no cadence'}) - no machine sees this one",
             )
         if rev.detector_kind == "by_construction":
-            return TriggerState(
-                ruling.id, CLEAR, rev.why or "cannot fire by construction"
-            )
+            return TriggerState(ruling.id, SEALED, rev.why)
         if not run:
             return TriggerState(
                 ruling.id, UNRUN, "pass --check to run the detector; until then nobody looked"
@@ -427,13 +465,26 @@ def _reversal(raw: Any, rid: str) -> Reversal:
             raise RegisterError(
                 f"{rid}: armed_on_exit 0 would read every successful run as a fired trigger"
             )
-    if kind == "by_construction" and not str(detector.get("why", "")).strip():
-        raise RegisterError(
-            f"{rid}: a by_construction detector must say why the trigger cannot fire. "
-            "Otherwise it is indistinguishable from a trigger nobody wired"
-        )
+    if kind == "by_construction":
+        why = str(detector.get("why", "")).strip()
+        if len(why) < _MIN_WHY or why.lower().rstrip(".") in _EMPTY_WHY:
+            # `why: "."` and `why: "TODO"` both passed a non-empty check, and a
+            # sealed trigger appeared in neither the armed nor the watched list.
+            raise RegisterError(
+                f"{rid}: a by_construction detector must say why the trigger cannot "
+                "fire, in a sentence. Otherwise it is indistinguishable from a "
+                "trigger nobody wired, and sealing one is the cheapest way to make "
+                "it disappear from every list"
+            )
+        if not owner or not review:
+            raise RegisterError(
+                f"{rid}: a by_construction trigger still names an owner and a review "
+                "cadence. The claim that it cannot fire is itself a claim, and "
+                "somebody has to be the one who notices it stopped being true"
+            )
     return Reversal(
         trigger=trigger, fallback=str(raw.get("fallback", "")).strip(),
+        owner=owner, review=review,
         detector_kind=kind, run=tuple(str(p) for p in run),
         armed_on_exit=armed if isinstance(armed, int) and not isinstance(armed, bool) else None,
         why=str(detector.get("why", "")).strip(),

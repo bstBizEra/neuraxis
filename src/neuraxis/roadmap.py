@@ -155,6 +155,9 @@ class RoadmapItem:
     remaining: tuple[str, ...] = ()
     note: str = ""
     acceptance: tuple[Mapping[str, Any], ...] = ()
+    #: Why this item legitimately waits on nothing. Required for an item with
+    #: no gates, so that emptiness is a statement rather than a typo.
+    ungated_because: str = ""
 
     @property
     def claims_done(self) -> bool:
@@ -264,9 +267,41 @@ class RoadmapReport:
 # ---- loading -----------------------------------------------------------
 
 
+#: Every key each block may carry. A key outside the set is a load failure,
+#: not an ignored line: `gatez:`, `blocked_by:`, `runs:` and `score: true` were
+#: all silently accepted, and the first two turned a blocked item into the top
+#: of the work queue.
+_ITEM_KEYS = frozenset({
+    "id", "title", "state", "owner", "gates", "score", "register_ref",
+    "shipped_in", "remaining", "note", "acceptance", "ungated_because",
+})
+_GATE_KEYS = frozenset({"kind", "id", "run", "armed_on_exit"})
+_EXTERNAL_KEYS = frozenset({
+    "title", "owner", "attained", "blocks_because", "note", "verify",
+})
+_ACCEPTANCE_KEYS = frozenset({"kind", "run", "proves"})
+_FREEZE_KEYS = frozenset({
+    "id", "in_force", "prohibits", "permits", "lifts_when", "operative_definition",
+})
+_TOP_KEYS = frozenset({"version", "roadmap", "source", "externals", "freeze", "items"})
+
+SCHEMA_VERSION = 1
+
+
+def _reject_unknown(raw: Mapping[str, Any], allowed: frozenset[str], where: str) -> None:
+    unknown = sorted(set(raw) - allowed)
+    if unknown:
+        raise RoadmapError(
+            f"{where}: unknown key(s) {', '.join(repr(k) for k in unknown)}. "
+            "A key this loader ignores is a constraint that silently is not there - "
+            "one transposed letter in `gates` put a blocked item at the top of the queue"
+        )
+
+
 def _gate(raw: Any, where: str) -> Gate:
     if not isinstance(raw, Mapping):
         raise RoadmapError(f"{where}: a gate must be a mapping, got {type(raw).__name__}")
+    _reject_unknown(raw, _GATE_KEYS, f"{where} gate")
     kind = str(raw.get("kind", "")).strip()
     if not kind:
         raise RoadmapError(f"{where}: a gate with no kind blocks nothing and names nothing")
@@ -287,6 +322,7 @@ def _gate(raw: Any, where: str) -> Gate:
 def _external(key: str, raw: Any) -> External:
     if not isinstance(raw, Mapping):
         raise RoadmapError(f"external {key}: must be a mapping")
+    _reject_unknown(raw, _EXTERNAL_KEYS, f"external {key}")
     owner = str(raw.get("owner", "")).strip()
     if not owner:
         # An external with no owner is a wish. Naming one is the cheapest
@@ -389,7 +425,23 @@ class Roadmap:
             )
             for g in item.gates
         )
-        if any(g.verdict == UNKNOWN for g in gates):
+        if not gates and not item.ungated_because:
+            # `all()` over an empty tuple is True, so an item with no gates used
+            # to report READY and sort to the top of the work queue -- and so
+            # did an item whose `gates:` key was misspelled, because unknown
+            # keys were ignored. A permission-shaped object with no content is
+            # permission (threat model class C2). Emptiness now has to be
+            # deliberate and stated.
+            verdict = UNKNOWN
+            gates = (
+                GateResult(
+                    Gate(kind="item", id=item.id),
+                    UNKNOWN,
+                    "no gates and no `ungated_because`. An item that waits on nothing "
+                    "either says why, or is a typo",
+                ),
+            )
+        elif any(g.verdict == UNKNOWN for g in gates):
             verdict = UNKNOWN
         elif all(g.satisfied for g in gates):
             verdict = READY
@@ -397,6 +449,19 @@ class Roadmap:
             verdict = BLOCKED
 
         contradiction = ""
+        # A review reported that `partial` items never contradict and proposed
+        # widening this to `has_shipped`. Widening it verbatim makes every
+        # honestly-partial item a contradiction, which is wrong: for a `partial`
+        # item the gates describe what blocks the REMAINDER, not what licensed
+        # the part already in the product. W9 is the case -- three releases
+        # shipped, the rest waiting on T1, and nothing anomalous about it.
+        #
+        # So the two halves are checked separately, and the acceptance check
+        # below is what covers the shipped half of a partial item:
+        #   `shipped` + an unsatisfied gate  -> the item claims completion it
+        #                                       does not have
+        #   anything shipped + failing acceptance -> the part that is in the
+        #                                       product no longer holds
         if item.claims_done and verdict != READY:
             names = ", ".join(g.gate.describe() for g in gates if not g.satisfied)
             contradiction = (
@@ -416,6 +481,13 @@ class Roadmap:
             )
             failed = [a for a in accepted if not a.satisfied]
             if failed:
+                # It used to set `contradiction` and leave `verdict` READY, so an
+                # item whose own acceptance command failed still sat in the
+                # actionable queue with `blockers: []`.
+                verdict = BLOCKED
+                gates = gates + tuple(
+                    GateResult(a.gate, BLOCKED, f"acceptance: {a.detail}") for a in failed
+                )
                 detail = "; ".join(f"`{' '.join(a.gate.run)}` {a.detail}" for a in failed)
                 contradiction = (
                     (contradiction + ". Also: " if contradiction else "")
@@ -442,19 +514,53 @@ class Roadmap:
     ) -> GateResult:
         if gate.kind == "external":
             ext = self.externals[gate.id]
-            if ext.attained:
-                return GateResult(gate, READY, f"{ext.id} attained ({ext.owner})")
-            return GateResult(
-                gate, BLOCKED, f"{ext.id} not attained; owned by {ext.owner}"
-            )
+            if not ext.attained:
+                return GateResult(gate, BLOCKED, f"{ext.id} not attained; owned by {ext.owner}")
+            if ext.verify:
+                # `verify` was parsed, stored, and never executed. It sat in the
+                # file directly under `attained: false` reading, in a diff, like
+                # proof. An external carrying a verifier is UNKNOWN until the
+                # verifier has run: one edited token must not open three items.
+                if not run_commands:
+                    return GateResult(
+                        gate, UNKNOWN,
+                        f"{ext.id} declares itself attained and carries a verifier that "
+                        "was not run; pass --check",
+                    )
+                checked = _run_command(Gate(kind="command", run=ext.verify), timeout)
+                if not checked.satisfied:
+                    return GateResult(
+                        gate, BLOCKED,
+                        f"{ext.id} is declared attained and its own verifier disagrees: "
+                        f"{checked.detail}",
+                    )
+                return GateResult(gate, READY, f"{ext.id} attained and verified ({ext.owner})")
+            return GateResult(gate, READY, f"{ext.id} attained ({ext.owner}), unverified")
 
         if gate.kind == "item":
             dep = self._readiness(
                 gate.id, resolver, attestations, at, run_commands, timeout, cache, stack
             )
-            if dep.item.claims_done:
-                return GateResult(gate, READY, f"{gate.id} is {dep.item.state}")
-            return GateResult(gate, BLOCKED, f"{gate.id} is {dep.item.state}, not shipped")
+            # This used to read `dep.item.claims_done` alone -- the string a
+            # human typed. So an upstream item declared `shipped` while its own
+            # gates were unsatisfied satisfied this gate, and an upstream whose
+            # verdict was UNKNOWN did too: UNKNOWN could not propagate through
+            # an item gate at all. Both contradict the module's own headline
+            # promise that readiness is computed rather than declared.
+            if not dep.item.claims_done:
+                return GateResult(gate, BLOCKED, f"{gate.id} is {dep.item.state}, not shipped")
+            if dep.verdict == UNKNOWN:
+                return GateResult(
+                    gate, UNKNOWN,
+                    f"{gate.id} says shipped but its own gates cannot be evaluated",
+                )
+            if dep.verdict != READY:
+                return GateResult(
+                    gate, BLOCKED,
+                    f"{gate.id} says shipped and its own gates are not satisfied - "
+                    "see its contradiction",
+                )
+            return GateResult(gate, READY, f"{gate.id} is {dep.item.state}")
 
         if gate.kind == "band_attained":
             if resolver is None:
@@ -512,10 +618,11 @@ class Roadmap:
             dep = results.get(gate.id)
             if dep is None:
                 reasons.append(f"{gate.id} is not an item in this roadmap")
-            elif not dep.item.claims_done:
+            elif not (dep.item.claims_done and dep.verdict == READY):
                 blockers = ", ".join(g.gate.describe() for g in dep.blockers)
                 reasons.append(
                     f"{gate.id} is {dep.item.state}"
+                    + (f" ({dep.verdict})" if dep.item.claims_done else "")
                     + (f", waiting on {blockers}" if blockers else "")
                 )
         return bool(reasons), tuple(reasons)
@@ -556,6 +663,16 @@ def load_roadmap(path: str | Path | None = None) -> Roadmap:
         raise RoadmapError(f"{resolved}: not valid YAML: {exc}") from None
     if not isinstance(data, Mapping):
         raise RoadmapError(f"{resolved}: the roadmap must be a mapping")
+    _reject_unknown(data, _TOP_KEYS, str(resolved))
+    version = data.get("version")
+    if version != SCHEMA_VERSION:
+        # A newer file must block an older tool rather than be read under the
+        # wrong semantics - the same rule this module already applies to an
+        # unrecognised gate kind, not previously applied to its own version.
+        raise RoadmapError(
+            f"{resolved}: schema version {version!r}, but this build reads "
+            f"version {SCHEMA_VERSION}"
+        )
 
     externals = {
         str(k): _external(str(k), v) for k, v in (data.get("externals") or {}).items()
@@ -570,6 +687,7 @@ def load_roadmap(path: str | Path | None = None) -> Roadmap:
         if not isinstance(raw, Mapping):
             raise RoadmapError(f"{resolved}: an item must be a mapping")
         item_id = str(raw.get("id", "")).strip()
+        _reject_unknown(raw, _ITEM_KEYS, f"item {item_id or '<unnamed>'}")
         if not item_id:
             raise RoadmapError(f"{resolved}: an item with no id cannot be depended on")
         if item_id in items:
@@ -583,8 +701,15 @@ def load_roadmap(path: str | Path | None = None) -> Roadmap:
         if not owner:
             raise RoadmapError(f"{item_id}: no owner. An item nobody owns is not scheduled")
         score = raw.get("score")
-        if score is not None and not isinstance(score, (int, float)):
+        if score is not None and (isinstance(score, bool) or not isinstance(score, (int, float))):
+            # `score: true` used to become 1.0. `register.py` had this guard and
+            # this loader did not, written by the same hand in the same week.
             raise RoadmapError(f"{item_id}: score must be a number or null, got {score!r}")
+        raw_gates = raw.get("gates")
+        if raw_gates is not None and (
+            not isinstance(raw_gates, Sequence) or isinstance(raw_gates, (str, bytes))
+        ):
+            raise RoadmapError(f"{item_id}: `gates` must be a list, got {type(raw_gates).__name__}")
         items[item_id] = RoadmapItem(
             id=item_id,
             title=str(raw.get("title", "")).strip() or item_id,
@@ -597,14 +722,27 @@ def load_roadmap(path: str | Path | None = None) -> Roadmap:
             remaining=tuple(str(v) for v in (raw.get("remaining") or ())),
             note=str(raw.get("note", "")).strip(),
             acceptance=tuple(raw.get("acceptance") or ()),
+            ungated_because=str(raw.get("ungated_because", "")).strip(),
         )
         for entry in items[item_id].acceptance:
             if not isinstance(entry, Mapping):
                 raise RoadmapError(f"{item_id}: an acceptance entry must be a mapping")
+            _reject_unknown(entry, _ACCEPTANCE_KEYS, f"{item_id} acceptance")
             run = entry.get("run")
             if isinstance(run, (str, bytes)):
+                raise RoadmapError(f"{item_id}: acceptance `run` is argv, not a command line")
+            # `runs:` for `run:` used to be discarded in silence, leaving
+            # `proves: The thing is proven.` in the file and nothing running.
+            if isinstance(run, Mapping) or not isinstance(run, Sequence) or not run:
                 raise RoadmapError(
-                    f"{item_id}: acceptance `run` is argv, not a command line"
+                    f"{item_id}: acceptance needs a non-empty `run` list. An acceptance "
+                    "that never executes is the claim this file exists to stop the "
+                    "roadmap being made of"
+                )
+            if not all(isinstance(part, str) for part in run):
+                raise RoadmapError(
+                    f"{item_id}: acceptance `run` must be a list of strings; a mapping "
+                    "iterates its keys and becomes a different, passing command"
                 )
 
     roadmap = Roadmap(

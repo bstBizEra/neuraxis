@@ -27,6 +27,7 @@ from neuraxis.roadmap import (
 )
 
 _MINIMAL = """
+version: 1
 roadmap: test
 externals:
   EXT-A:
@@ -38,7 +39,7 @@ items:
     title: First
     state: planned
     owner: me
-    gates: []
+    ungated_because: a fixture that waits on nothing
 """
 
 
@@ -106,6 +107,7 @@ def test_a_duplicate_key_is_refused_rather_than_silently_overwritten(tmp_path):
     """
     with pytest.raises(RoadmapError) as exc:
         load_roadmap(_write(tmp_path, """
+            version: 1
             roadmap: test
             items:
               - id: A
@@ -123,6 +125,7 @@ def test_a_duplicate_key_is_refused_rather_than_silently_overwritten(tmp_path):
 def test_an_external_with_no_owner_is_refused(tmp_path):
     with pytest.raises(RoadmapError) as exc:
         load_roadmap(_write(tmp_path, """
+            version: 1
             roadmap: test
             externals:
               EXT-A: {title: x, attained: false}
@@ -135,6 +138,7 @@ def test_attained_must_be_a_boolean_not_a_word(tmp_path):
     """`attained: "false"` is a non-empty string and therefore truthy."""
     with pytest.raises(RoadmapError) as exc:
         load_roadmap(_write(tmp_path, """
+            version: 1
             roadmap: test
             externals:
               EXT-A: {title: x, owner: somebody, attained: "false"}
@@ -146,6 +150,7 @@ def test_attained_must_be_a_boolean_not_a_word(tmp_path):
 def test_a_gate_naming_a_missing_item_is_a_load_failure(tmp_path):
     with pytest.raises(RoadmapError) as exc:
         load_roadmap(_write(tmp_path, """
+            version: 1
             roadmap: test
             items:
               - id: A
@@ -165,6 +170,7 @@ def test_a_gate_naming_an_undeclared_external_is_a_load_failure(tmp_path):
     """
     with pytest.raises(RoadmapError) as exc:
         load_roadmap(_write(tmp_path, """
+            version: 1
             roadmap: test
             items:
               - id: A
@@ -179,6 +185,7 @@ def test_a_gate_naming_an_undeclared_external_is_a_load_failure(tmp_path):
 def test_a_cycle_is_refused(tmp_path):
     with pytest.raises(RoadmapError) as exc:
         load_roadmap(_write(tmp_path, """
+            version: 1
             roadmap: test
             items:
               - {id: A, title: A, state: planned, owner: me, gates: [{kind: item, id: B}]}
@@ -190,8 +197,9 @@ def test_a_cycle_is_refused(tmp_path):
 def test_an_item_with_no_owner_is_refused(tmp_path):
     with pytest.raises(RoadmapError) as exc:
         load_roadmap(_write(tmp_path, """
+            version: 1
             roadmap: test
-            items: [{id: A, title: A, state: planned}]
+            items: [{id: A, title: A, state: planned, ungated_because: x}]
         """))
     assert "nobody owns" in str(exc.value)
 
@@ -199,8 +207,9 @@ def test_an_item_with_no_owner_is_refused(tmp_path):
 def test_an_unknown_state_is_refused(tmp_path):
     with pytest.raises(RoadmapError) as exc:
         load_roadmap(_write(tmp_path, """
+            version: 1
             roadmap: test
-            items: [{id: A, title: A, state: nearly, owner: me}]
+            items: [{id: A, title: A, state: nearly, owner: me, ungated_because: x}]
         """))
     assert "nearly" in str(exc.value)
     assert all(s in str(exc.value) for s in ITEM_STATES)
@@ -209,6 +218,7 @@ def test_an_unknown_state_is_refused(tmp_path):
 def test_a_command_given_as_a_string_is_refused_not_split(tmp_path):
     with pytest.raises(RoadmapError) as exc:
         load_roadmap(_write(tmp_path, """
+            version: 1
             roadmap: test
             items:
               - id: A
@@ -224,9 +234,10 @@ def test_a_frozen_roadmap_must_say_what_lifts_the_freeze(tmp_path):
     """A freeze that cannot be discharged is one that gets ignored instead."""
     with pytest.raises(RoadmapError) as exc:
         load_roadmap(_write(tmp_path, """
+            version: 1
             roadmap: test
             freeze: {id: F, in_force: true}
-            items: [{id: A, title: A, state: planned, owner: me}]
+            items: [{id: A, title: A, state: planned, owner: me, ungated_because: nothing gates it}]
         """))
     assert "lift condition" in str(exc.value)
 
@@ -234,9 +245,10 @@ def test_a_frozen_roadmap_must_say_what_lifts_the_freeze(tmp_path):
 def test_a_freeze_naming_a_missing_item_is_refused(tmp_path):
     with pytest.raises(RoadmapError) as exc:
         load_roadmap(_write(tmp_path, """
+            version: 1
             roadmap: test
             freeze: {id: F, in_force: true, lifts_when: [{kind: item, id: GHOST}]}
-            items: [{id: A, title: A, state: planned, owner: me}]
+            items: [{id: A, title: A, state: planned, owner: me, ungated_because: nothing gates it}]
         """))
     assert "GHOST" in str(exc.value)
 
@@ -251,6 +263,7 @@ def test_an_unrecognised_gate_kind_blocks_rather_than_vanishing(tmp_path):
     reports READY on a condition this version cannot even read.
     """
     report = _resolved(tmp_path, """
+        version: 1
         roadmap: test
         items:
           - {id: A, title: A, state: planned, owner: me, gates: [{kind: moon_phase, id: full}]}
@@ -264,6 +277,7 @@ def test_an_unrecognised_gate_kind_blocks_rather_than_vanishing(tmp_path):
 
 def test_a_band_gate_with_no_registry_is_unknown_not_ready(tmp_path):
     report = _resolved(tmp_path, """
+        version: 1
         roadmap: test
         items:
           - {id: A, title: A, state: planned, owner: me, gates: [{kind: band_attained, id: BAND-A}]}
@@ -273,6 +287,7 @@ def test_a_band_gate_with_no_registry_is_unknown_not_ready(tmp_path):
 
 def test_a_band_not_in_the_registry_is_unknown_not_a_crash(tmp_path):
     report = _resolved(tmp_path, """
+        version: 1
         roadmap: test
         items:
           - {id: A, title: A, state: planned, owner: me, gates: [{kind: band_attained, id: BAND-Z}]}
@@ -284,6 +299,7 @@ def test_a_band_not_in_the_registry_is_unknown_not_a_crash(tmp_path):
 
 def test_a_command_gate_is_unknown_until_it_is_run(tmp_path):
     body = """
+        version: 1
         roadmap: test
         items:
           - id: A
@@ -298,6 +314,7 @@ def test_a_command_gate_is_unknown_until_it_is_run(tmp_path):
 
 def test_a_failing_command_gate_blocks(tmp_path):
     body = """
+        version: 1
         roadmap: test
         items:
           - id: A
@@ -313,6 +330,7 @@ def test_a_failing_command_gate_blocks(tmp_path):
 
 def test_a_missing_command_blocks_rather_than_raising(tmp_path):
     item = _by_id(_resolved(tmp_path, """
+        version: 1
         roadmap: test
         items:
           - {id: A, title: A, state: planned, owner: me, gates: [{kind: command, run: ["no-such-binary-xyz"]}]}
@@ -323,6 +341,7 @@ def test_a_missing_command_blocks_rather_than_raising(tmp_path):
 
 def test_a_hanging_command_gate_has_not_passed(tmp_path):
     body = """
+        version: 1
         roadmap: test
         items:
           - id: A
@@ -342,6 +361,7 @@ def test_a_hanging_command_gate_has_not_passed(tmp_path):
 def test_a_shipped_item_with_an_unsatisfied_gate_is_a_contradiction(tmp_path):
     """The shape of 'the Band C work shipped while Band C was blocked'."""
     report = _resolved(tmp_path, """
+        version: 1
         roadmap: test
         externals:
           T1: {title: kernel, owner: somebody, attained: false}
@@ -356,8 +376,9 @@ def test_a_shipped_item_with_an_unsatisfied_gate_is_a_contradiction(tmp_path):
 
 def test_a_shipped_item_is_never_actionable(tmp_path):
     report = _resolved(tmp_path, """
+        version: 1
         roadmap: test
-        items: [{id: A, title: A, state: shipped, owner: me}]
+        items: [{id: A, title: A, state: shipped, owner: me, ungated_because: nothing gates it}]
     """)
     assert _by_id(report)["A"].verdict == READY
     assert not _by_id(report)["A"].actionable
@@ -367,9 +388,10 @@ def test_a_shipped_item_is_never_actionable(tmp_path):
 def test_an_item_gate_is_satisfied_by_shipped_not_by_ready(tmp_path):
     """B waits on A. A is unblocked but unbuilt, so B still waits."""
     report = _resolved(tmp_path, """
+        version: 1
         roadmap: test
         items:
-          - {id: A, title: A, state: planned, owner: me}
+          - {id: A, title: A, state: planned, owner: me, ungated_because: nothing gates it}
           - {id: B, title: B, state: planned, owner: me, gates: [{kind: item, id: A}]}
     """)
     items = _by_id(report)
@@ -382,17 +404,20 @@ def test_acceptance_runs_only_for_work_that_claims_to_have_shipped(tmp_path):
     """A command attached to unbuilt work proves nothing, so it is not run."""
     failing = json.dumps([sys.executable, "-c", "raise SystemExit(1)"])
     report = _resolved(tmp_path, f"""
+        version: 1
         roadmap: test
         items:
           - id: PLANNED
             title: not built yet
             state: planned
             owner: me
+            ungated_because: nothing gates it
             acceptance: [{{run: {failing}}}]
           - id: SHIPPED
             title: claims to be in
             state: shipped
             owner: me
+            ungated_because: nothing gates it
             acceptance: [{{run: {failing}}}]
     """, run_commands=True)
     items = _by_id(report)
@@ -406,12 +431,14 @@ def test_a_partial_item_is_held_to_its_acceptance_too(tmp_path):
     """`partial` means some of it is in the product, and that half has to hold."""
     failing = json.dumps([sys.executable, "-c", "raise SystemExit(1)"])
     report = _resolved(tmp_path, f"""
+        version: 1
         roadmap: test
         items:
           - id: P
             title: half in
             state: partial
             owner: me
+            ungated_because: nothing gates it
             acceptance: [{{run: {failing}}}]
     """, run_commands=True)
     assert "acceptance fails" in _by_id(report)["P"].contradiction
@@ -423,17 +450,20 @@ def test_a_partial_item_is_held_to_its_acceptance_too(tmp_path):
 def test_actionable_is_ordered_by_register_score_with_unscored_last(tmp_path):
     """An unscored item was never weighed, so it does not lead the queue."""
     report = _resolved(tmp_path, """
+        version: 1
         roadmap: test
         items:
-          - {id: LOW, title: low, state: planned, owner: me, score: 1.0}
-          - {id: NONE, title: unscored, state: planned, owner: me}
-          - {id: HIGH, title: high, state: planned, owner: me, score: 4.8}
+          - {id: LOW, title: low, state: planned, owner: me, score: 1.0, ungated_because: nothing gates it}
+          - {id: NONE, title: unscored, state: planned, owner: me, ungated_because: nothing gates it}
+          - {id: HIGH, title: high, state: planned, owner: me, score: 4.8, ungated_because: nothing gates it}
     """)
     assert [r.item.id for r in report.actionable] == ["HIGH", "LOW", "NONE"]
 
 
 def test_a_blocked_external_names_who_owns_it(tmp_path):
-    report = _resolved(tmp_path, _MINIMAL.replace("gates: []", "gates: [{kind: external, id: EXT-A}]"))
+    report = _resolved(tmp_path, _MINIMAL.replace(
+        "ungated_because: a fixture that waits on nothing",
+        "gates: [{kind: external, id: EXT-A}]"))
     assert "somebody" in _by_id(report)["A"].gates[0].detail
 
 
@@ -462,6 +492,7 @@ def test_an_empty_queue_says_so_rather_than_printing_a_blank_heading(tmp_path, c
     call for opposite responses.
     """
     body = """
+        version: 1
         roadmap: test
         externals:
           EXT-A: {title: x, owner: somebody, attained: false}
@@ -534,6 +565,7 @@ def _with(tmp_path, body: str, store: AttestationStore, **kw):
 
 def test_a_band_gate_opens_when_the_band_actually_opens(tmp_path):
     body = """
+        version: 1
         roadmap: test
         items:
           - {id: A, title: A, state: planned, owner: me, gates: [{kind: band_attained, id: BAND-A}]}
@@ -567,6 +599,7 @@ def test_a_band_attained_only_on_a_waiver_still_blocks_the_plan(tmp_path, monkey
 
     monkeypatch.setattr(BandResolver, "status", conditional)
     item = _by_id(_with(tmp_path, """
+        version: 1
         roadmap: test
         items:
           - {id: A, title: A, state: planned, owner: me, gates: [{kind: band_attained, id: BAND-A}]}
@@ -577,6 +610,7 @@ def test_a_band_attained_only_on_a_waiver_still_blocks_the_plan(tmp_path, monkey
 
 def test_a_control_gate_reads_the_same_freshness_window_the_gate_does(tmp_path):
     body = """
+        version: 1
         roadmap: test
         items:
           - {id: A, title: A, state: planned, owner: me, gates: [{kind: control_attested, id: GV-01}]}
@@ -587,6 +621,7 @@ def test_a_control_gate_reads_the_same_freshness_window_the_gate_does(tmp_path):
 
 def test_an_unknown_control_is_unknown_not_a_crash(tmp_path):
     item = _by_id(_with(tmp_path, """
+        version: 1
         roadmap: test
         items:
           - {id: A, title: A, state: planned, owner: me, gates: [{kind: control_attested, id: GV-99}]}
@@ -601,6 +636,7 @@ def test_an_unknown_control_is_unknown_not_a_crash(tmp_path):
 def test_a_gate_with_no_kind_is_refused(tmp_path):
     with pytest.raises(RoadmapError) as exc:
         load_roadmap(_write(tmp_path, """
+            version: 1
             roadmap: test
             items: [{id: A, title: A, state: planned, owner: me, gates: [{id: X}]}]
         """))
@@ -610,6 +646,7 @@ def test_a_gate_with_no_kind_is_refused(tmp_path):
 def test_a_gate_with_no_target_is_refused(tmp_path):
     with pytest.raises(RoadmapError) as exc:
         load_roadmap(_write(tmp_path, """
+            version: 1
             roadmap: test
             items: [{id: A, title: A, state: planned, owner: me, gates: [{kind: item}]}]
         """))
@@ -619,6 +656,7 @@ def test_a_gate_with_no_target_is_refused(tmp_path):
 def test_a_command_gate_with_no_command_is_refused(tmp_path):
     with pytest.raises(RoadmapError) as exc:
         load_roadmap(_write(tmp_path, """
+            version: 1
             roadmap: test
             items: [{id: A, title: A, state: planned, owner: me, gates: [{kind: command}]}]
         """))
@@ -628,6 +666,7 @@ def test_a_command_gate_with_no_command_is_refused(tmp_path):
 def test_a_duplicate_item_id_is_refused(tmp_path):
     with pytest.raises(RoadmapError) as exc:
         load_roadmap(_write(tmp_path, """
+            version: 1
             roadmap: test
             items:
               - {id: A, title: one, state: planned, owner: me}
@@ -639,8 +678,9 @@ def test_a_duplicate_item_id_is_refused(tmp_path):
 def test_a_non_numeric_score_is_refused(tmp_path):
     with pytest.raises(RoadmapError) as exc:
         load_roadmap(_write(tmp_path, """
+            version: 1
             roadmap: test
-            items: [{id: A, title: A, state: planned, owner: me, score: high}]
+            items: [{id: A, title: A, state: planned, owner: me, score: high, ungated_because: x}]
         """))
     assert "score" in str(exc.value)
 
@@ -648,6 +688,7 @@ def test_a_non_numeric_score_is_refused(tmp_path):
 def test_an_acceptance_command_given_as_a_string_is_refused(tmp_path):
     with pytest.raises(RoadmapError) as exc:
         load_roadmap(_write(tmp_path, """
+            version: 1
             roadmap: test
             items:
               - id: A
@@ -682,9 +723,10 @@ def test_invalid_yaml_is_an_error_not_a_traceback(tmp_path):
 
 def test_a_lifted_freeze_reports_as_lifted(tmp_path):
     report = _resolved(tmp_path, """
+        version: 1
         roadmap: test
         freeze: {id: F, in_force: false}
-        items: [{id: A, title: A, state: planned, owner: me}]
+        items: [{id: A, title: A, state: planned, owner: me, ungated_because: nothing gates it}]
     """)
     assert report.freeze_in_force is False
 
@@ -696,9 +738,10 @@ def test_no_freeze_at_all_reports_nothing(tmp_path):
 def test_in_force_must_be_a_boolean(tmp_path):
     with pytest.raises(RoadmapError) as exc:
         load_roadmap(_write(tmp_path, """
+            version: 1
             roadmap: test
             freeze: {id: F, in_force: "yes", lifts_when: [{kind: item, id: A}]}
-            items: [{id: A, title: A, state: planned, owner: me}]
+            items: [{id: A, title: A, state: planned, owner: me, ungated_because: nothing gates it}]
         """))
     assert "boolean" in str(exc.value)
 
@@ -706,6 +749,7 @@ def test_in_force_must_be_a_boolean(tmp_path):
 def test_a_freeze_lift_condition_that_is_not_an_item_is_reported_not_ignored(tmp_path):
     """Silently skipping it would lift the freeze on a condition nobody read."""
     report = _resolved(tmp_path, """
+        version: 1
         roadmap: test
         freeze:
           id: F
@@ -717,3 +761,211 @@ def test_a_freeze_lift_condition_that_is_not_an_item_is_reported_not_ignored(tmp
     """)
     assert report.freeze_in_force is True
     assert "cannot be read here" in report.freeze_reasons[0]
+
+
+# ---- the second adversarial review of the watchers (v0.19.0) ------------
+
+
+def test_an_ungated_item_is_unknown_not_ready(tmp_path):
+    """`all()` over an empty tuple is True, so an item with no gates reported
+    READY and sorted to the top of the work queue. A permission-shaped object
+    with no content is permission."""
+    report = _resolved(tmp_path, """
+        version: 1
+        roadmap: t
+        items: [{id: A, title: A, state: planned, owner: me, score: 9.9}]
+    """)
+    item = _by_id(report)["A"]
+    assert item.verdict == UNKNOWN
+    assert not item.actionable
+    assert "no gates and no `ungated_because`" in item.gates[0].detail
+    assert report.actionable == ()
+
+
+def test_an_ungated_item_that_says_why_is_ready(tmp_path):
+    """The positive control: emptiness is allowed when it is deliberate."""
+    report = _resolved(tmp_path, """
+        version: 1
+        roadmap: t
+        items:
+          - {id: A, title: A, state: planned, owner: me, ungated_because: nothing gates it}
+    """)
+    assert _by_id(report)["A"].actionable
+
+
+@pytest.mark.parametrize("key", ["gatez", "blocked_by", "gate"])
+def test_a_misspelled_gates_key_is_a_load_failure(tmp_path, key):
+    """One transposed letter put a blocked item at the top of the queue."""
+    with pytest.raises(RoadmapError) as exc:
+        load_roadmap(_write(tmp_path, f"""
+            version: 1
+            roadmap: t
+            externals: {{T1: {{title: x, owner: o, attained: false}}}}
+            items:
+              - id: A
+                title: A
+                state: planned
+                owner: me
+                {key}: [{{kind: external, id: T1}}]
+        """))
+    assert key in str(exc.value)
+
+
+def test_an_item_gate_reads_the_computed_verdict_not_the_typed_state(tmp_path):
+    """An upstream declared `shipped` while its own gates were unsatisfied used
+    to satisfy a downstream gate, and UNKNOWN could not propagate through an
+    item gate at all - both against this module's headline promise."""
+    report = _resolved(tmp_path, """
+        version: 1
+        roadmap: t
+        externals: {T1: {title: x, owner: o, attained: false}}
+        items:
+          - {id: A, title: A, state: shipped, owner: me, gates: [{kind: external, id: T1}]}
+          - {id: B, title: B, state: planned, owner: me, score: 5.0, gates: [{kind: item, id: A}]}
+    """)
+    items = _by_id(report)
+    assert items["A"].verdict == BLOCKED and items["A"].contradiction
+    assert items["B"].verdict == BLOCKED, "a shipped-but-blocked upstream satisfied the gate"
+    assert report.actionable == ()
+
+
+def test_unknown_propagates_through_an_item_gate(tmp_path):
+    report = _resolved(tmp_path, """
+        version: 1
+        roadmap: t
+        items:
+          - {id: U, title: U, state: shipped, owner: me, gates: [{kind: band_attained, id: BAND-Z}]}
+          - {id: D, title: D, state: planned, owner: me, score: 7.0, gates: [{kind: item, id: U}]}
+    """, with_gate=True)
+    items = _by_id(report)
+    assert items["U"].verdict == UNKNOWN
+    assert items["D"].verdict == UNKNOWN, "UNKNOWN did not propagate"
+
+
+def test_a_failing_acceptance_blocks_rather_than_only_annotating(tmp_path):
+    """It used to set `contradiction` and leave the verdict READY, so an item
+    whose own acceptance failed sat in the actionable queue with no blockers."""
+    failing = json.dumps([sys.executable, "-c", "raise SystemExit(1)"])
+    report = _resolved(tmp_path, f"""
+        version: 1
+        roadmap: t
+        items:
+          - id: P
+            title: half in
+            state: partial
+            owner: me
+            ungated_because: nothing gates it
+            acceptance: [{{run: {failing}}}]
+    """, run_commands=True)
+    item = _by_id(report)["P"]
+    assert item.verdict == BLOCKED and not item.actionable
+    assert item.contradiction
+
+
+def test_an_honestly_partial_item_is_not_a_contradiction(tmp_path):
+    """A review proposed widening the contradiction check to `has_shipped`.
+
+    Taken verbatim that makes every honestly-partial item a contradiction: for
+    a `partial` item the gates describe what blocks the REMAINDER, not what
+    licensed the part already shipped. W9 is exactly that shape. The two halves
+    are checked separately instead - `shipped` against its gates, and anything
+    shipped against its acceptance.
+    """
+    report = _resolved(tmp_path, """
+        version: 1
+        roadmap: t
+        externals: {T1: {title: x, owner: o, attained: false}}
+        items:
+          - id: W
+            title: half done
+            state: partial
+            owner: me
+            shipped_in: [v1.0.0]
+            gates: [{kind: external, id: T1}]
+    """)
+    item = _by_id(report)["W"]
+    assert item.verdict == BLOCKED
+    assert not item.contradiction
+
+
+def test_an_acceptance_run_typo_is_a_load_failure(tmp_path):
+    """`runs:` for `run:` was discarded in silence, leaving `proves:` in the
+    file and nothing running."""
+    with pytest.raises(RoadmapError) as exc:
+        load_roadmap(_write(tmp_path, """
+            version: 1
+            roadmap: t
+            items:
+              - id: A
+                title: A
+                state: shipped
+                owner: me
+                ungated_because: x
+                acceptance: [{kind: command, runs: ["false"], proves: The thing is proven.}]
+        """))
+    assert "runs" in str(exc.value)
+
+
+def test_an_acceptance_run_that_is_a_mapping_is_refused(tmp_path):
+    """A mapping is truthy and iterates its KEYS, so it became a different,
+    passing command."""
+    with pytest.raises(RoadmapError) as exc:
+        load_roadmap(_write(tmp_path, """
+            version: 1
+            roadmap: t
+            items:
+              - id: A
+                title: A
+                state: shipped
+                owner: me
+                ungated_because: x
+                acceptance: [{run: {echo: hi}}]
+        """))
+    assert "list" in str(exc.value)
+
+
+def test_a_declared_external_verifier_must_actually_run(tmp_path):
+    """`External.verify` was parsed, stored and never executed - sitting in the
+    file directly under `attained` and reading, in a diff, like proof. One
+    edited token opened three items including the kernel boundary."""
+    body = """
+        version: 1
+        roadmap: t
+        externals:
+          T1: {title: x, owner: o, attained: true, verify: ["false"]}
+        items: [{id: A, title: A, state: planned, owner: me, gates: [{kind: external, id: T1}]}]
+    """
+    unrun = _by_id(_resolved(tmp_path, body))["A"]
+    assert unrun.verdict == UNKNOWN and "was not run" in unrun.gates[0].detail
+    ran = _by_id(_resolved(tmp_path, body, run_commands=True))["A"]
+    assert ran.verdict == BLOCKED and "its own verifier disagrees" in ran.gates[0].detail
+
+
+def test_a_boolean_score_is_refused(tmp_path):
+    """`score: true` became 1.0. The sibling loader had this guard; this one did not."""
+    with pytest.raises(RoadmapError):
+        load_roadmap(_write(tmp_path, """
+            version: 1
+            roadmap: t
+            items: [{id: A, title: A, state: planned, owner: me, score: true, ungated_because: x}]
+        """))
+
+
+def test_a_newer_schema_version_blocks_an_older_tool(tmp_path):
+    """The rule this module already applied to an unrecognised gate kind, not
+    previously applied to its own version field."""
+    with pytest.raises(RoadmapError) as exc:
+        load_roadmap(_write(tmp_path, """
+            version: 99
+            roadmap: t
+            items: [{id: A, title: A, state: planned, owner: me, ungated_because: x}]
+        """))
+    assert "99" in str(exc.value)
+
+
+def test_a_missing_schema_version_is_refused(tmp_path):
+    with pytest.raises(RoadmapError):
+        load_roadmap(_write(tmp_path, """
+            roadmap: t
+            items: [{id: A, title: A, state: planned, owner: me, ungated_because: x}]
+        """))

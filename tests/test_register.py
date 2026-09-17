@@ -9,6 +9,7 @@ watching.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import textwrap
 
@@ -16,7 +17,7 @@ import pytest
 
 from neuraxis import load_register, load_registry
 from neuraxis.cli import main
-from neuraxis.register import ARMED, CLEAR, UNRUN, WATCHED, RegisterError
+from neuraxis.register import ARMED, CLEAR, SEALED, UNRUN, WATCHED, RegisterError
 
 _MINIMAL = """
     register: test
@@ -348,47 +349,45 @@ def test_cli_reports_a_broken_register_as_an_error(tmp_path, capsys):
     assert "error:" in capsys.readouterr().err
 
 
-# ---- the detector resolves the tool rather than assuming a PATH entry ---
+# ---- the detector runs THIS package, not something from the environment --
 
 
-def test_a_detector_calling_neuraxis_works_without_a_path_entry(tmp_path, monkeypatch):
-    """A PATH miss is not evidence about the register.
+def test_the_environment_cannot_turn_a_detector_clear(tmp_path, monkeypatch):
+    """The v0.16.0 fix introduced a worse hole than the one it closed.
 
-    Spelling the detector's command as the literal string `neuraxis` would make
-    it depend on an install location, and report a trigger armed because the
-    tool lives somewhere else. That is also the substitutability problem D-07's
-    own contract identifies, occurring in the thing that watches D-07.
+    It resolved `NEURAXIS_BIN` first so a PATH miss would not report a trigger
+    armed. That reasoning is right for avoiding a false ARM and was applied to
+    a mechanism that manufactures a false CLEAR: `NEURAXIS_BIN=/bin/true` - or
+    a two-line `exit 0` script named `neuraxis` earlier on PATH - turned every
+    detector CLEAR. In a fail-closed system a false CLEAR is strictly worse.
     """
-    import neuraxis.register as mod
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    fake = shim / "neuraxis"
+    fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake.chmod(0o755)
 
+    register = load_register(_write(tmp_path, _MINIMAL.replace(
+        "          owner: somebody\n          review: quarterly\n",
+        '          detector: {kind: command, run: [neuraxis, waivers], armed_on_exit: 10}\n')))
+
+    honest = _by_id(register.resolve(run_detectors=True))["D-01"].trigger.state
+
+    monkeypatch.setenv("NEURAXIS_BIN", "/bin/true")
+    monkeypatch.setenv("PATH", f"{shim}:{os.environ['PATH']}")
+    rigged = _by_id(register.resolve(run_detectors=True))["D-01"].trigger.state
+
+    assert rigged == honest, "the environment changed the detector's answer"
+
+
+def test_a_detector_naming_neuraxis_runs_this_interpreter(tmp_path, monkeypatch):
+    """No PATH entry required: a PATH miss is not evidence about the register."""
     monkeypatch.delenv("NEURAXIS_BIN", raising=False)
-    monkeypatch.setattr(mod.shutil, "which", lambda _name: None)
+    monkeypatch.setenv("PATH", str(tmp_path))
     register = load_register(_write(tmp_path, _MINIMAL.replace(
         "          owner: somebody\n          review: quarterly\n",
         '          detector: {kind: command, run: [neuraxis, validate], armed_on_exit: 10}\n')))
     assert _by_id(register.resolve(run_detectors=True))["D-01"].trigger.state == CLEAR
-
-
-def test_the_detector_honours_the_same_env_vars_the_caller_contract_uses(tmp_path, monkeypatch):
-    monkeypatch.setenv("NEURAXIS_BIN", sys.executable)
-    monkeypatch.setenv("NEURAXIS_BIN_ARGS", json.dumps(["-c", "raise SystemExit(10)"]))
-    register = load_register(_write(tmp_path, _MINIMAL.replace(
-        "          owner: somebody\n          review: quarterly\n",
-        '          detector: {kind: command, run: [neuraxis, validate], armed_on_exit: 10}\n')))
-    assert _by_id(register.resolve(run_detectors=True))["D-01"].trigger.state == ARMED
-
-
-def test_a_malformed_bin_args_arms_rather_than_silently_using_another_binary(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setenv("NEURAXIS_BIN", sys.executable)
-    monkeypatch.setenv("NEURAXIS_BIN_ARGS", "not json")
-    register = load_register(_write(tmp_path, _MINIMAL.replace(
-        "          owner: somebody\n          review: quarterly\n",
-        '          detector: {kind: command, run: [neuraxis, validate], armed_on_exit: 10}\n')))
-    state = _by_id(register.resolve(run_detectors=True))["D-01"].trigger
-    assert state.state == ARMED
-    assert "could not be resolved" in state.detail
 
 
 def test_a_detector_that_is_not_neuraxis_is_left_alone(tmp_path):
@@ -397,3 +396,90 @@ def test_a_detector_that_is_not_neuraxis_is_left_alone(tmp_path):
         "          owner: somebody\n          review: quarterly\n",
         f"          detector: {{kind: command, run: {run}, armed_on_exit: 10}}\n")))
     assert _by_id(register.resolve(run_detectors=True))["D-01"].trigger.state == CLEAR
+
+
+# ---- enforced, sealed, and not-run are all distinct from clear ----------
+
+
+def test_the_default_call_does_not_report_everything_enforced():
+    """`and known` short-circuited on an empty set, so the DEFAULT call - which
+    is what a caller whose registry failed to load passes - reported every
+    ruling enforced. Supplying NOTHING read as everything present while
+    supplying the WRONG list read as missing: exactly backwards."""
+    report = load_register().resolve()
+    capability_rulings = [r for r in report.rulings if r.missing or r.unchecked]
+    assert capability_rulings, "no ruling depends on a capability; this test is vacuous"
+    for r in capability_rulings:
+        assert r.unchecked and not r.enforced
+
+
+def test_supplying_the_registry_reports_them_enforced():
+    from neuraxis import load_registry
+
+    report = load_register().resolve(capabilities=tuple(load_registry().capabilities))
+    assert all(r.enforced and not r.unchecked for r in report.rulings)
+
+
+def test_a_sealed_trigger_is_not_reported_clear_and_is_never_invisible():
+    """`by_construction` returned CLEAR and appeared in neither the armed nor
+    the watched list, so deleting `owner`/`review` and writing
+    `detector: {kind: by_construction, why: "."}` was the cheapest way to make
+    an inconvenient trigger disappear from every list in the report."""
+    report = load_register().resolve(run_detectors=True)
+    sealed = report.sealed
+    assert sealed, "nothing is sealed; this test is vacuous"
+    for r in sealed:
+        assert r.trigger.state == SEALED
+        assert r.ruling.reversal.owner and r.ruling.reversal.review
+
+
+def test_a_thin_reason_for_sealing_is_refused(tmp_path):
+    for why in ('"."', '"TODO"', '"obvious"'):
+        with pytest.raises(RegisterError) as exc:
+            load_register(_write(tmp_path, _MINIMAL.replace(
+                "          owner: somebody\n          review: quarterly\n",
+                f"          detector: {{kind: by_construction, why: {why}}}\n")))
+        assert "in a sentence" in str(exc.value)
+
+
+def test_sealing_still_needs_an_owner(tmp_path):
+    long_why = "The block derives from the matrix and no separate clause exists to drift."
+    with pytest.raises(RegisterError) as exc:
+        load_register(_write(tmp_path, _MINIMAL.replace(
+            "          owner: somebody\n          review: quarterly\n",
+            f'          detector: {{kind: by_construction, why: "{long_why}"}}\n')))
+    assert "somebody has to be the one who notices" in str(exc.value)
+
+
+def test_not_run_appears_in_its_own_list():
+    """It was in neither `armed` nor `watched`, and `UNRUN` was not exported,
+    so a consumer reading `armed == []` as clear got green for detectors nobody
+    ran and could not even name the state to filter on."""
+    import neuraxis.register as mod
+
+    assert "UNRUN" in mod.__all__ and "SEALED" in mod.__all__
+    report = load_register().resolve()
+    assert {r.ruling.id for r in report.unrun} == {"D-01", "D-05"}
+    assert report.to_dict()["not_run"]
+
+
+def test_a_symbol_outside_this_package_is_refused(tmp_path):
+    """`importlib.import_module` on a string from a config file RUNS it, and
+    `neuraxis register` looks like a read-only status command."""
+    with pytest.raises(RegisterError) as exc:
+        load_register(_write(tmp_path, _MINIMAL.replace(
+            "neuraxis.waiver:NON_COMPENSABLE_FLOOR", "os:system")))
+    assert "inside this package" in str(exc.value)
+
+
+def test_symbol_resolution_does_not_run_descriptors(tmp_path):
+    """`hasattr` then `getattr` ran every descriptor twice, and a module-level
+    `__getattr__` - the standard deprecation-shim pattern - satisfied any name
+    at all, which would have made this whole check vacuous the day one landed."""
+    import inspect
+
+    import neuraxis.register as mod
+
+    source = inspect.getsource(mod._resolve)
+    assert "getattr_static" in source
+    assert "hasattr(" not in source

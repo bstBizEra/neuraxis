@@ -358,7 +358,7 @@ corresponds to a confirmed exploit, and each has a regression test in
 python -m pytest -q --cov=neuraxis --cov-report=term-missing
 ```
 
-**Python:** 747 tests, 94% coverage. **JS client:** 24 contract tests. The suite includes explicit **positive controls** — `test_allows_when_everything_holds`, `test_ratified_non_delegable_capability_is_allowed`, `test_guard_decorator_runs_the_body_on_allow`. Without them, a gate that denied unconditionally would pass every other assertion in the suite. `tests/test_failclosed.py` asserts that faults become denials rather than implicit allows.
+**Python:** 769 tests, 94% coverage. **JS client:** 24 contract tests. The suite includes explicit **positive controls** — `test_allows_when_everything_holds`, `test_ratified_non_delegable_capability_is_allowed`, `test_guard_decorator_runs_the_body_on_allow`. Without them, a gate that denied unconditionally would pass every other assertion in the suite. `tests/test_failclosed.py` asserts that faults become denials rather than implicit allows.
 
 ---
 
@@ -661,6 +661,10 @@ registry, a command gate that was not run: UNKNOWN, never READY. Same rule as an
 unrecognised exit code, same reason.
 
 **An external with no owner does not load.** An external nobody owns is a wish.
+And an item with no gates does not load either unless it says `ungated_because`
+— `all()` over an empty list is True, so an ungated item reported READY and
+sorted to the top of the queue, as did one whose `gates:` key was misspelled.
+Unknown keys are now refused outright.
 The by-owner list above is the most useful line in the output: it is the set of
 conversations that must happen before anything else moves.
 
