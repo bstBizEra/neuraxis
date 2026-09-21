@@ -18,6 +18,19 @@ controls paired to it, enforced mechanically rather than by instruction.
 
 from __future__ import annotations
 
+from .biztrust import (
+    AGENT_EXECUTABLE,
+    HUMAN_ONLY,
+    REFUSED,
+    AssistError,
+    AssistReport,
+    HubState,
+    NextAction,
+    Triage,
+    assist,
+    classify,
+    load_hub,
+)
 from .attestation import AttestationStore
 from .caller import (
     BLOCKING_EVENTS,
@@ -100,11 +113,14 @@ from .resolver import BandResolver
 from .scorecard import Scorecard, measure
 from .waiver import Waiver, WaiverPolicy, WaiverRegister
 
-__version__ = "0.19.0"
+__version__ = "0.20.0"
 FRAMEWORK = "bst-neuraxis"
 PRINCIPLE = "governed-evolution"
 
 __all__ = [
+    "AGENT_EXECUTABLE",
+    "AssistError",
+    "AssistReport",
     "Attestation",
     "AttestationError",
     "AttestationStore",
@@ -136,8 +152,11 @@ __all__ = [
     "FRAMEWORK",
     "GVControl",
     "GovernanceGate",
+    "HUMAN_ONLY",
+    "HubState",
     "Limit",
     "NeuraxisError",
+    "NextAction",
     "Obligation",
     "ObligationAudit",
     "OutstandingObligation",
@@ -145,6 +164,7 @@ __all__ = [
     "Provider",
     "ProviderOutcome",
     "ProviderResult",
+    "REFUSED",
     "Registry",
     "RegisterError",
     "RegistryError",
@@ -156,6 +176,7 @@ __all__ = [
     "RoadmapReport",
     "ScenarioResult",
     "Scorecard",
+    "Triage",
     "UnknownCapabilityError",
     "UnknownControlError",
     "UnwiredProvider",
@@ -165,11 +186,14 @@ __all__ = [
     "WaiverPolicy",
     "WaiverRegister",
     "__version__",
+    "assist",
     "audit_envelopes",
     "check_caller",
+    "classify",
     "check_source",
     "audit_obligations",
     "get_provider",
+    "load_hub",
     "load_register",
     "load_registry",
     "load_roadmap",

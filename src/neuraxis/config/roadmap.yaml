@@ -193,6 +193,31 @@ items:
         id: T1
     note: What turns the evidence sink into an assurance capability.
 
+  - id: W10
+    title: Unattended assist over the BizTrust Docs Hub
+    register_ref: null
+    score: null
+    state: shipped
+    owner: neuraxis
+    shipped_in: [v0.20.0]
+    ungated_because: >-
+      It reads another repository's recorded state and writes nothing, so it
+      licenses no capability and opens no band. Its own answer is gated -
+      every action it would report as executable goes through this gate as an
+      IL-06 request - which is the dependency, and the gate is already here.
+    note: >-
+      The hub's stop conditions ("An agent posts the waiver", "An agent
+      supplies either answer") were enforced by an agent reading them
+      carefully. This makes them a check. Exit 12, every recorded action
+      reserved to a person, is the expected result and a finished run.
+    acceptance:
+      - kind: command
+        run: ["neuraxis", "assist", "--self-test"]
+        proves: >-
+          The classifier answers differently for an agent-executable action and
+          for one reserved to a person, so neither its refusals nor its grants
+          are vacuous.
+
   - id: ILR-REV
     title: ILR-001 amended to match its own rulings
     register_ref: enforcement-status closing note
