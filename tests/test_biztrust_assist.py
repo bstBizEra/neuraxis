@@ -619,6 +619,23 @@ def test_a_human_only_action_never_reaches_the_gate(tmp_path, registry, full_sto
 # ---------------------------------------------------------------------------
 
 
+def test_a_hub_written_from_windows_still_reads(tmp_path, registry, full_store):
+    """A BOM must not become a refusal that names the wrong cause.
+
+    PowerShell writes one by default. Read as plain utf-8, the record would
+    ESCALATE with "not valid JSON" — fail-closed, and for an encoding reason
+    rather than the record's own state, which is a correct answer for the wrong
+    reason and the hardest kind of defect to notice.
+    """
+    root = _hub(tmp_path)
+    for name in ("current-state.json", "next-actions.json"):
+        target = root / "badf" / name
+        target.write_bytes(("\ufeff" + target.read_text(encoding="utf-8")).encode("utf-8"))
+    report = _report(root, registry, full_store)
+    assert report.decision is Decision.ALLOW
+    assert [t.action_id for t in report.executable] == ["NS-900"]
+
+
 def test_git_is_restricted_to_a_read_only_allowlist(tmp_path):
     for forbidden in ("commit", "push", "checkout", "reset", "config"):
         with pytest.raises(AssistError, match="read-only allowlist"):

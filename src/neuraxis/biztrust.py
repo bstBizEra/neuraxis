@@ -540,7 +540,13 @@ def _strings(value: Any, label: str) -> tuple[str, ...]:
 
 def _load_json(path: Path, label: str) -> Mapping[str, Any]:
     try:
-        text = path.read_text(encoding="utf-8")
+        # utf-8-sig, as every other reader in this package does. PowerShell
+        # writes a BOM by default, and the hub is maintained from Windows as
+        # well as CI. Read as plain utf-8, a BOM makes `json.loads` raise and
+        # the run ESCALATEs with "not valid JSON" — a refusal that looks like
+        # the tool working and names the wrong cause. Fail-closed for an
+        # encoding reason is still a correct answer for the wrong reason.
+        text = path.read_text(encoding="utf-8-sig")
     except OSError as exc:
         raise AssistError(f"{label}: cannot read {path}: {exc}") from exc
     try:
