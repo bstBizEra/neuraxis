@@ -42,6 +42,13 @@ jobs:
       - name: Provider coverage
         run: neuraxis providers
 
+      # The assist classifier decides what an unattended agent may do to
+      # another repository. One that refused everything would report a clean
+      # hub every day and look correct doing it, so the positive control runs
+      # in CI beside the vacuity probe.
+      - name: The assist classifier discriminates
+        run: neuraxis assist --self-test
+
   js-client:
     name: js client contract / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

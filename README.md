@@ -297,6 +297,7 @@ neuraxis attest --control GV-08 --result "$RESULT" \
 | `register` | The decision register: rulings, enforcement points, reversal detectors |
 | `roadmap` | The build sequence as a graph, resolved against the live gate |
 | `caller` | Black-box suite for gate **callers** (ILR-001-DR D-07) |
+| `biztrust` | What an unattended agent may do on the BizTrust Docs Hub, decided twice |
 | `cli` | The JSON/exit-code contract |
 
 ---
@@ -712,9 +713,88 @@ trigger is one nobody notices firing.
 detector exiting neither 0 nor the armed code is **ARMED** — a detector that
 cannot answer has not answered. See [ADR 0009](docs/adr/0009-a-ruling-names-its-enforcement.md).
 
+## Unattended assist — what an agent may do to someone else's repository
+
+The BizTrust Docs Hub (`bstBizEra/biztrust_guide`) is run by agents under a
+written charter, and its pending work is recorded as JSON with the real
+controls written in prose:
+
+> `"stop_conditions": ["An agent posts the waiver, or a chat instruction is treated as the waiver"]`
+> `"stop_conditions": ["An agent supplies either answer"]`
+> `"stop_conditions": ["An agent occupies or infers a seat"]`
+
+Those are correct and binding, and until now they were enforced by an agent
+reading them carefully. **An instruction to be careful is not a control.** The
+failure is never an agent deciding to defy a stop condition; it is an agent
+deciding, under pressure and quite reasonably, that *this* case is not what the
+condition meant.
+
+```bash
+neuraxis assist --hub ../biztrust_guide --verifier github-ci --rollback-tested
+```
+
+```
+WAIT_FOR_AUTHORITY   BIZTRUST-GUIDE-WP-118 (ENGINEERING_READY)
+  hub:      bstBizEra/biztrust_guide  @32ab28558161
+  recorded: resume=WAIT_FOR_AUTHORITY  primary=NS-041
+  - the hub's recorded resume decision is WAIT_FOR_AUTHORITY; an agent does not resume past it
+
+  ACTION     VERDICT           CLAUSE           WHY
+  NS-040     HUMAN_ONLY        authority        authority 'HUMAN_DECISION_REQUIRED' carries the reserving token(s) HUMAN, REQUIRED
+  NS-041     HUMAN_ONLY        authority        authority 'HUMAN_DECISION_REQUIRED' carries the reserving token(s) HUMAN, REQUIRED
+  NS-043     REFUSED           resume-decision  the record grants it, and the hub's resume decision is WAIT_FOR_AUTHORITY, so the gate was never asked
+  NS-044     HUMAN_ONLY        authority        authority 'OPERATOR_INSTRUCTION_2026_09_06_PROCEED_PROPOSED_ONLY' matches no grant phrase
+
+  nothing here is an unattended agent's to do.
+```
+
+Exit 12. That is a **finished run**, not a failure — and it is the claim that
+was previously made by an agent about itself.
+
+**Two locks, and either one alone refuses.** Five clauses over the record —
+authority, seat, stop conditions, evidence, and the record's own consistency —
+and then an ordinary `AuthorityRequest` for IL-06 at BAND-B. The hub's
+`authority` string is a line of JSON in a repository anyone can open a pull
+request against; it does not open a band here. With nothing attested, every
+action the record would grant is denied:
+
+```
+DENY   the record's authority does not open a band; the gate does
+  NS-900  REFUSED  gate  BAND-B is not attained ...
+```
+
+Naming no verifier refuses everything (NX-INV-2), and so does an unasserted
+rollback (NX-INV-3). Those defaults are the design: a run configured by nobody
+is refused by the invariants rather than permitted by them.
+
+**The classifier proves itself before every pass.** A positive control and a
+vacuity probe — the providers' rules 2 and 3, turned on the thing that decides
+what an agent may do:
+
+```bash
+neuraxis assist --self-test
+```
+
+It earned that on its first run. The veto list began with the role nouns
+`OPERATOR`, `REVIEWER`, `BROKER`, on the reasoning that a human role named in
+an authority string means a human owns it — which refused the hub's own real
+grant, because the operator is the *source* of an operator instruction. A
+classifier that refuses everything passes every deny-assertion anyone would
+write against it. That is the vacuous check arriving from the cautious side,
+which is the side nobody inspects.
+
+**No write path.** Git is restricted to a read-only allowlist in code, so
+acquiring one is a visible change rather than an argument. The run produces a
+report; `.github/workflows/biztrust-assist.yml` runs it daily and writes the
+triage to the job summary. Automation may propose — merging stays GV-07's.
+
+Full contract, including the clause tables and the known limits:
+[`docs/BIZTRUST-ASSIST.md`](docs/BIZTRUST-ASSIST.md) and
+[ADR 0010](docs/adr/0010-a-record-does-not-grant-itself.md).
+
 ## Architecture decisions
 
-Nine of them, in [`docs/adr/`](docs/adr/). Each states how it could be wrong,
+Ten of them, in [`docs/adr/`](docs/adr/). Each states how it could be wrong,
 and a test enforces that: no Reversal section, no ADR. The short version of why
 the log exists is the same argument as everything else here — a rule with no
 single place it lives is a rule that gets re-litigated.

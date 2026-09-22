@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from . import __version__
+from .biztrust import AGENT_EXECUTABLE, AssistReport, HUMAN_ONLY, assist, selftest
 from .attestation import AttestationStore
 from .caller import BLOCKING_EVENTS, CALLER_SCENARIOS, check_caller
 from .conformance import check_source
@@ -1314,6 +1315,95 @@ def cmd_assure(args: argparse.Namespace) -> int:
 # ---- parser ------------------------------------------------------------
 
 
+def cmd_assist(args: argparse.Namespace) -> int:
+    """What may an unattended agent do on the BizTrust Docs Hub right now?
+
+    The hub records its state in two JSON files and its charter in prose, and
+    the prose is where the stop conditions live: *"An agent posts the waiver"*,
+    *"An agent supplies either answer"*. An agent that resumes by reading those
+    carefully is a control made of care, which is the control this package
+    exists to replace. So the answer is computed instead, refusal-first, and
+    twice: once against the record's own clauses and once against this gate.
+
+    Exit codes follow the decision, as everywhere else. 12 - every recorded
+    action is a person's - is the expected answer on a healthy hub with a human
+    frontier, and it is a finished run, not a failure.
+    """
+    if args.self_test:
+        probe = selftest()
+        lines = [
+            f"classifier self-test: {'LIVE' if probe.live else 'NOT LIVE'}",
+            f"  positive control: {'pass' if probe.positive_control else 'FAIL'}"
+            "   (an agent-executable action must classify as executable)",
+            f"  vacuity probe:    {'pass' if probe.vacuity_probe else 'FAIL'}"
+            "   (an action reserved to a person must not)",
+            *(f"  {d}" for d in probe.detail),
+        ]
+        _emit(probe.to_dict(), as_json=args.json, text="\n".join(lines))
+        return EXIT_OK if probe.live else EXIT_ERROR
+
+    registry: Any | None = None
+    store = AttestationStore()
+    try:
+        registry, store = _load(args)
+    except NeuraxisError as exc:
+        # Without the registry there is no second lock, and a run with one lock
+        # missing must not report the other lock's answer as permission.
+        print(f"error: the gate could not be loaded, so nothing can be allowed: {exc}",
+              file=sys.stderr)
+        return EXIT_ERROR
+
+    report = assist(
+        args.hub,
+        registry=registry,
+        store=store,
+        identity=args.identity,
+        verifier=args.verifier,
+        rollback_tested=args.rollback_tested,
+        state_path=args.state_file,
+        actions_path=args.actions_file,
+    )
+    _emit(report.to_dict(), as_json=args.json, text=_assist_text(report))
+    return EXIT_BY_DECISION[report.decision]
+
+
+def _assist_text(report: AssistReport) -> str:
+    state = report.state
+    head = report.observed.head[:12] if report.observed.head else "unobserved"
+    lines = [f"{report.decision.value}"]
+    if state:
+        lines[0] += f"   {state.work_package_id} ({state.work_package_state})"
+        lines.append(
+            f"  hub:      {state.repository}  @{head}"
+            + ("  [dirty]" if report.observed.dirty else "")
+        )
+        lines.append(f"  recorded: resume={state.resume_decision}  primary={state.primary_next_action_id}")
+    for reason in report.reasons:
+        lines.append(f"  - {reason}")
+    if report.faults:
+        lines.append("  faults:")
+        lines += [f"    ! {f}" for f in report.faults]
+    if report.triage:
+        lines.append("")
+        lines.append(f"  {'ACTION':<10} {'VERDICT':<17} {'CLAUSE':<14} WHY")
+        for item in report.triage:
+            why = item.reasons[0] if item.reasons else ""
+            lines.append(
+                f"  {item.action_id:<10} {item.verdict:<17} {item.clause:<14} {why}"
+            )
+    executable = report.executable
+    lines.append("")
+    if executable:
+        lines.append(
+            f"  {len(executable)} action(s) an unattended agent may perform: "
+            + ", ".join(t.action_id for t in executable)
+        )
+        lines.append("  it may propose the work. Merging it remains a person's (GV-07).")
+    else:
+        lines.append("  nothing here is an unattended agent's to do.")
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="neuraxis",
@@ -1416,6 +1506,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--timeout", default=60.0, type=float, help="seconds per detector")
     p.set_defaults(func=cmd_register)
+
+    p = sub.add_parser(
+        "assist",
+        help="what an unattended agent may do on the BizTrust Docs Hub, decided twice",
+    )
+    p.add_argument(
+        "--hub", default=os.environ.get("NEURAXIS_BIZTRUST_HUB", "."),
+        help="path to a biztrust_guide checkout (default: $NEURAXIS_BIZTRUST_HUB or .)",
+    )
+    p.add_argument("--state", default=None, dest="state_file", help="override badf/current-state.json")
+    p.add_argument("--actions", default=None, dest="actions_file", help="override badf/next-actions.json")
+    p.add_argument(
+        "--identity", default="neuraxis-assist", help="the principal this run acts as",
+    )
+    p.add_argument(
+        "--verifier", default=None,
+        help="who checks the work. Naming nobody refuses everything (NX-INV-2), which is "
+             "the point: unattended work nothing independent checks is what GV-04 rules out",
+    )
+    p.add_argument(
+        "--rollback-tested", action="store_true", dest="rollback_tested",
+        help="assert that reverting this work has been tested. NX-INV-3: untested counts as none",
+    )
+    p.add_argument(
+        "--self-test", action="store_true", dest="self_test",
+        help="run only the classifier's positive control and vacuity probe, and report whether "
+             "it discriminates at all",
+    )
+    p.set_defaults(func=cmd_assist)
 
     p = sub.add_parser("status", help="band attainment against current attestations")
     p.set_defaults(func=cmd_status)

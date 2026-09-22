@@ -1,6 +1,6 @@
 # Architecture decision records
 
-Nine decisions shape everything in this package. Until now they were true of
+Ten decisions shape everything in this package. Until now they were true of
 the code and written down in three different places — a README section called
 "design decisions worth knowing", a roadmap retrospective, and a project doc
 that only some readers have. That is the same failure this package exists to
@@ -22,6 +22,7 @@ with no ADR does not exist: it is a preference, and preferences lose.
 | [0007](0007-l0-shells-out.md) | L0 reaches the gate by shelling out to the CLI | Accepted |
 | [0008](0008-roadmap-is-a-graph.md) | The roadmap is a dependency graph resolved against the live gate | Accepted |
 | [0009](0009-a-ruling-names-its-enforcement.md) | A ruling names the code that enforces it | Accepted |
+| [0010](0010-a-record-does-not-grant-itself.md) | A record does not grant itself: two locks on unattended work | Accepted |
 
 ## How these relate to ILR-001-DR
 

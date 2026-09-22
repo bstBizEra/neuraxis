@@ -1,0 +1,116 @@
+name: biztrust-assist
+
+# The unattended pass over the BizTrust Docs Hub. It answers one question -
+# which recorded action is an agent's to perform - and it answers it without a
+# person present, which is the only reason it can be trusted to say "none".
+#
+# It writes nothing to the hub. It has no token for it, `permissions` is
+# read-only, and the module it runs holds a read-only git allowlist in code. A
+# run that finds work does not do the work: it names it, and a person or a
+# separately-authorised job proposes it. Automation may propose, never merge.
+#
+# Exit 12 - every recorded action is reserved to a person - is the EXPECTED
+# result on a healthy hub and is reported as success. 11 is the one that wants
+# attention: the hub's own record disagrees with itself.
+
+on:
+  schedule:
+    - cron: "41 7 * * *"      # daily, 07:41 UTC. Off the hour, like drift.yml.
+  workflow_dispatch:
+    inputs:
+      hub_ref:
+        description: Branch or SHA of biztrust_guide to read
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  assist:
+    name: what may an unattended agent do on the hub
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out this package
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install the gate
+        run: python -m pip install -e .
+
+      # The classifier proves it discriminates BEFORE it is pointed at a real
+      # record. A classifier that refuses everything would otherwise report a
+      # clean hub every day, indefinitely, and look correct doing it.
+      - name: The classifier is live
+        run: neuraxis assist --self-test
+
+      - name: Check out the hub
+        uses: actions/checkout@v4
+        with:
+          repository: bstBizEra/biztrust_guide
+          ref: ${{ inputs.hub_ref || 'main' }}
+          path: hub
+          # The clauses read a recorded baseline commit and the observed HEAD.
+          # A shallow checkout still reports a HEAD, which is all the revision
+          # binding needs; nothing here walks history.
+          fetch-depth: 1
+
+      - name: Assist
+        id: assist
+        run: |
+          set +e
+          neuraxis --json assist --hub hub --verifier github-actions > assist.json
+          code=$?
+          set -e
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, pathlib
+          r = json.loads(pathlib.Path("assist.json").read_text(encoding="utf-8"))
+          state = r.get("state") or {}
+          print(f"## {r['decision']} — {state.get('work_package_id', 'no work package')}")
+          print()
+          print(f"hub `{(r['observed'].get('head') or 'unobserved')[:12]}`, "
+                f"recorded resume `{state.get('resume_decision', '?')}`, "
+                f"self-test `{'live' if (r.get('selftest') or {}).get('live') else 'NOT LIVE'}`")
+          print()
+          for reason in r["reasons"]:
+              print(f"- {reason}")
+          if r["faults"]:
+              print()
+              print("### Faults")
+              for fault in r["faults"]:
+                  print(f"- {fault}")
+          print()
+          print("| action | verdict | clause | why |")
+          print("|---|---|---|---|")
+          for t in r["triage"]:
+              why = (t["reasons"][0] if t["reasons"] else "").replace("|", "\\|")
+              print(f"| {t['action_id']} | {t['verdict']} | {t['clause']} | {why} |")
+          print()
+          print(f"**Executable by an unattended agent: {r['executable'] or 'none'}**")
+          if r["executable"]:
+              print()
+              print("It may be *proposed*. Merging remains a person's (GV-07).")
+          PY
+
+      - name: Keep the run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: biztrust-assist
+          path: assist.json
+          if-no-files-found: warn
+
+      - name: Interpret the exit code
+        run: |
+          code='${{ steps.assist.outputs.code }}'
+          case "$code" in
+            0)  echo "::notice::the hub has work an unattended agent may propose; see the summary" ;;
+            12) echo "::notice::every recorded action is reserved to a person. This is a finished run" ;;
+            10) echo "::warning::the hub's record would grant an action the gate refuses; see the summary" ;;
+            11) echo "::error::the hub's operational record is unreadable or disagrees with itself"; exit 1 ;;
+            *)  echo "::error::assist could not run (exit $code)"; exit 1 ;;
+          esac
