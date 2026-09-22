@@ -1,6 +1,6 @@
 # neuraxis
 
-**BST Neuraxis — Intelligent Loop Registry and Governance Gate.** Reference implementation of ILR-001. **v0.7.0.**
+**BST Neuraxis — Intelligent Loop Registry and Governance Gate.** Reference implementation of ILR-001. **v0.22.0.**
 
 Capability is licensed by the governance controls paired to it. A capability whose controls do not hold a current passing attestation is denied — mechanically, at the call site, not by instruction to an agent.
 
