@@ -38,9 +38,28 @@ externals:
       GV-01/02/03/08 are non-compensable (D-06), so every band above B derives
       its block from T1 rather than from a clause that could drift.
     note: >-
-      Blocked in turn on two decisions that are not Claude's to take: repository
-      visibility (KBS-001 D-08) and identity issuance, which mints a credential
-      on the owner's account.
+      Blocked in turn on two decisions that are not Claude's to take. They were
+      prose in this note until v0.21.x; prose cannot go stale, which is how a
+      blocker stays open indefinitely without anyone deciding that it should.
+      They are entries now, and `neuraxis roadmap` reports this external as
+      OVERDUE once the review date passes.
+    decisions:
+      - id: KBS-001-D-08
+        question: >-
+          Is the KBS-001 kernel repository public or private? The boundary probe
+          (GV-01) and the WORM sink (GV-03) are built against whichever it is,
+          and both are non-compensable, so the choice cannot be deferred past
+          the first band.
+        owner: OP-Vily
+        recorded: 2026-09-22
+      - id: T1-IDENTITY
+        question: >-
+          Who issues the T1 identity, and on whose account? Issuance mints a
+          real credential, which is why no agent can take this decision and why
+          W9's third clause stays unenforced until it exists.
+        owner: OP-Vily
+        recorded: 2026-09-22
+    review: 2026-10-22
   T3:
     title: Canonical Lesson contract source
     owner: OP-Vily
