@@ -88,6 +88,36 @@ def test_every_declared_external_is_actually_waited_on():
     assert set(roadmap.externals) == waited, set(roadmap.externals) ^ waited
 
 
+def test_gv_05_does_not_inherit_the_loop_contract_blockers():
+    """GV-05 and GV-09 were one item, and only GV-09's blocker was real.
+
+    `PKG-GV-05-09`'s single gate was `PKG-LOOP-CONTRACTS`, which waits on T3 and
+    T4 - the Canonical Lesson and Weakness Signal contract sources. A rollback
+    drill audit has no relationship to either schema, so GV-05 reported as
+    waiting on an external that does not block it, and the package's one
+    actionable item read as somebody else's to unblock.
+
+    This pins the split. A future edit that re-bundles them, or that gates
+    GV-05 on the loop contracts again, fails here rather than quietly removing
+    the only work this repository can do.
+    """
+    roadmap = load_roadmap()
+    assert "PKG-GV-05-09" not in roadmap.items, "the bundle is back"
+
+    gv05, gv09 = roadmap.items["PKG-GV-05"], roadmap.items["PKG-GV-09"]
+
+    # GV-05 waits on nothing, and says why in a sentence rather than by omission.
+    assert gv05.gates == ()
+    assert gv05.ungated_because.strip()
+
+    # GV-09's blocker is real and unchanged.
+    assert [(g.kind, g.id) for g in gv09.gates] == [("item", "PKG-LOOP-CONTRACTS")]
+
+    # And the split is visible where it matters: something is finally actionable.
+    report = roadmap.resolve(load_registry(), AttestationStore())
+    assert "PKG-GV-05" in {r.item.id for r in report.actionable}
+
+
 def test_the_freeze_is_in_force_and_says_what_lifts_it():
     report = load_roadmap().resolve(load_registry(), AttestationStore())
     assert report.freeze_in_force is True
