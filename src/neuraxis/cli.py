@@ -21,7 +21,7 @@ import json
 import os
 import re
 import sys
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -493,35 +493,28 @@ def cmd_roadmap(args: argparse.Namespace) -> int:
             for owner, ids in sorted(owed.items()):
                 lines.append(f"  {owner:<12} {', '.join(sorted(ids))}")
 
-        # An external's review date and the decisions it waits on. Reported
-        # rather than stored as prose, because a blocker nobody is scheduled to
-        # look at again is indistinguishable from one nobody intends to resolve.
-        waiting = [e for e in roadmap.externals.values() if not e.attained]
-        pending = [e for e in waiting if e.decisions]
-        if pending:
-            lines += ["", "DECISIONS THESE BLOCKERS WAIT ON"]
-            for ext in sorted(pending, key=lambda e: e.id):
-                due = (
-                    f"review {ext.review.isoformat()}"
-                    + ("  OVERDUE" if ext.overdue() else "")
-                    if ext.review
-                    else "no review date set"
-                )
-                lines.append(f"  {ext.id}  ({due})")
+        # When each blocker gets looked at again, and what it waits on.
+        # Reported rather than left in prose, because a blocker nobody is
+        # scheduled to revisit is indistinguishable from one nobody intends to
+        # resolve. Every unattained external has a date — the loader refuses a
+        # roadmap where one does not — so this table has no empty cells and no
+        # "unscheduled" branch to render.
+        waiting = sorted(
+            (e for e in roadmap.externals.values() if not e.attained),
+            key=lambda e: (e.review or date.max, e.id),
+        )
+        if waiting:
+            lines += ["", "WHEN THESE BLOCKERS ARE NEXT LOOKED AT"]
+            for ext in waiting:
+                due = ext.review.isoformat() if ext.review else "-"
+                flag = "  OVERDUE" if ext.overdue() else ""
+                lines.append(f"  {due}  {ext.id:<20} {ext.owner}{flag}")
                 for decision in ext.decisions:
                     lines.append(
-                        f"    {decision.id:<14} {decision.owner:<10} "
-                        f"recorded {decision.recorded.isoformat()}"
+                        f"              {decision.id:<14} recorded "
+                        f"{decision.recorded.isoformat()}  "
+                        f"{' '.join(decision.question.split())[:90]}"
                     )
-                    lines.append(f"      {' '.join(decision.question.split())[:150]}")
-        undated = sorted(e.id for e in waiting if e.review is None)
-        if undated:
-            lines += [
-                "",
-                f"  NO REVIEW DATE: {', '.join(undated)}",
-                "  An unattained external nobody is scheduled to revisit is a wish with"
-                " an owner.",
-            ]
 
     if report.contradictions:
         lines += ["", "CONTRADICTIONS"]

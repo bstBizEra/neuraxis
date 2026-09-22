@@ -145,6 +145,31 @@ def test_t1_records_its_blocking_decisions_with_dates():
         assert decision.question.strip().endswith((".", "?")) and len(decision.question) > 40
 
 
+def test_every_blocker_this_repository_waits_on_is_scheduled():
+    """The requirement the loader deliberately does not carry.
+
+    `review` is optional in the schema, because requiring it would put two
+    irrelevant fields in every roadmap fixture in this suite — most of which
+    exist to test freezes and gate keys, not scheduling. The protection that
+    matters is narrower than the schema: *this* repository's blockers are all
+    scheduled, and a new one added without a date fails here.
+
+    A date with no stated reason is caught by the loader instead, so this only
+    has to check that one exists.
+    """
+    roadmap = load_roadmap()
+    waiting = {k: e for k, e in roadmap.externals.items() if not e.attained}
+    assert waiting, "a roadmap with no unattained externals makes this vacuous"
+
+    undated = sorted(k for k, e in waiting.items() if e.review is None)
+    assert not undated, (
+        f"unscheduled blocker(s): {', '.join(undated)}. An external nobody is "
+        f"scheduled to revisit is a wish with an owner"
+    )
+    for key, ext in waiting.items():
+        assert ext.review_because.strip(), key
+
+
 def test_an_external_goes_overdue_once_its_review_date_passes():
     """The whole point of the date. If this never fires, the date is decoration."""
     from datetime import timedelta
@@ -202,6 +227,47 @@ def test_a_decision_with_no_question_is_refused(tmp_path):
                 decisions:
                   - id: D-1
                     recorded: 2026-01-01
+            items:
+              - id: A
+                title: First
+                state: planned
+                owner: me
+                ungated_because: a fixture that waits on nothing
+        """)
+
+
+def test_a_review_date_with_no_stated_reason_is_refused(tmp_path):
+    """Six blockers on one unexplained cadence produce six identical reviews."""
+    with pytest.raises(RoadmapError, match="no `review_because`"):
+        _resolved(tmp_path, """
+            version: 1
+            roadmap: test
+            externals:
+              EXT-A:
+                title: Something
+                owner: somebody
+                attained: false
+                review: 2027-01-01
+            items:
+              - id: A
+                title: First
+                state: planned
+                owner: me
+                ungated_because: a fixture that waits on nothing
+        """)
+
+
+def test_a_reason_to_revisit_with_no_date_schedules_nothing(tmp_path):
+    with pytest.raises(RoadmapError, match="`review_because` with no `review`"):
+        _resolved(tmp_path, """
+            version: 1
+            roadmap: test
+            externals:
+              EXT-A:
+                title: Something
+                owner: somebody
+                attained: false
+                review_because: we should look at this again sometime
             items:
               - id: A
                 title: First
