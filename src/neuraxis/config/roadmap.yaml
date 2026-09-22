@@ -59,22 +59,39 @@ externals:
           W9's third clause stays unenforced until it exists.
         owner: OP-Vily
         recorded: 2026-09-22
+    review_because: >-
+      The shortest cadence here, because this is the keystone: GV-01 and GV-03
+      are non-compensable and BAND-A requires both, so nothing in the programme
+      opens until it lands. Both decisions are answerable in an afternoon by
+      the one person who can answer them, which is what makes a month generous
+      rather than tight.
     review: 2026-10-22
   T3:
     title: Canonical Lesson contract source
     owner: OP-Vily
     attained: false
     blocks_because: The v0.4 loop contracts cannot be written against a schema that does not exist.
+    review_because: >-
+      Live the moment T1 lands, not before: GV-09 sits above BAND-B, which T1
+      gates anyway. Shares a date with T4, which its own blocks_because pairs
+      it to - reviewing one without the other is artificial.
+    review: 2026-12-22
   T4:
     title: Weakness Signal contract source
     owner: OP-Vily
     attained: false
     blocks_because: Same as T3.
+    review_because: Paired with T3; same owner, same decision, same date.
+    review: 2026-12-22
   E-13:
     title: Kill-switch drill procedure
     owner: OP-Vily
     attained: false
     blocks_because: GV-10's provider would audit a drill nobody runs, which is the vacuous probe.
+    review_because: >-
+      GV-10 is a BAND-E/F control, so this becomes live on the same cycle as
+      T3/T4 rather than before T1.
+    review: 2026-12-22
   L0-ENTRY-POINTS:
     title: Five conforming L0 entry points, one per D-03 blocking event
     owner: L0
@@ -84,6 +101,10 @@ externals:
       specified at lease issuance. D-07 published the contract; the entry points
       are L0's to build.
     verify: ["neuraxis", "caller-conform", "--", "<entry point argv>"]
+    review_because: >-
+      Owned by another team and it lifts the freeze, which makes it the blocker
+      most likely to drift without anyone here noticing. Rides T1's cycle.
+    review: 2026-10-22
   DEPLOY-TARGET:
     title: A host that can run the assurance schedule
     owner: OP-Vily
@@ -92,6 +113,11 @@ externals:
       attestation_max_age is 24h and global, so every band closes a day after
       its last attestation. The schedule is part of the system, not the ops
       around it.
+    review_because: >-
+      Costs nothing while no band is open and costs a band a day once one is:
+      attestation_max_age is 24h. Reviewed on the cycle where that starts to
+      bite.
+    review: 2026-12-22
   BST-SA-WORKSTREAM:
     title: A named BST-SA workstream to gate end to end
     owner: OP-Vily
@@ -99,6 +125,10 @@ externals:
     blocks_because: >-
       The v1.0 claim is a workstream actually running under the gate. Nothing
       here can nominate one.
+    review_because: >-
+      The v1.0 claim, furthest downstream of everything else here. A shorter
+      cadence would produce six reviews that all say "still waiting on T1".
+    review: 2027-03-22
 
 # ---------------------------------------------------------------------------
 # The freeze. Stated here so its lift condition is a check rather than a memory.

@@ -159,12 +159,17 @@ class External:
     #: on "a decision" in prose is a blocker nobody can be asked about; named
     #: and dated, it is a conversation with a subject.
     decisions: tuple[PendingDecision, ...] = ()
-    #: When somebody looks at this again. Optional, because inventing a date
-    #: for a dependency that is not yours is worse than admitting there is
-    #: none — but an unattained external carrying one goes OVERDUE when it
-    #: passes, which is the whole point. A blocker with no review date is how
-    #: "blocked on T1" becomes "we will do T1 after".
+    #: When somebody looks at this again. A blocker with no review date is how
+    #: "blocked on T1" becomes "we will do T1 after". Optional in the schema
+    #: and required of this repository's own externals by a test — see
+    #: `_review` for why the requirement lives there rather than in the loader.
     review: date | None = None
+    #: Why that date and not another. Required alongside `review`, for the
+    #: reason `ungated_because` is required of an item with no gates: a date
+    #: nobody justified is a date nobody will defend when it slips, and six
+    #: externals all reviewed on the same arbitrary cadence produce six
+    #: reviews that say the same thing.
+    review_because: str = ""
 
     def overdue(self, at: date | None = None) -> bool:
         if self.attained or self.review is None:
@@ -308,7 +313,7 @@ _ITEM_KEYS = frozenset({
 _GATE_KEYS = frozenset({"kind", "id", "run", "armed_on_exit"})
 _EXTERNAL_KEYS = frozenset({
     "title", "owner", "attained", "blocks_because", "note", "verify",
-    "decisions", "review",
+    "decisions", "review", "review_because",
 })
 _DECISION_KEYS = frozenset({"id", "question", "owner", "recorded"})
 _ACCEPTANCE_KEYS = frozenset({"kind", "run", "proves"})
@@ -379,8 +384,45 @@ def _external(key: str, raw: Any) -> External:
         note=str(raw.get("note", "")).strip(),
         verify=tuple(str(p) for p in verify),
         decisions=_decisions(key, raw.get("decisions"), owner),
-        review=_review_date(key, raw.get("review")),
+        **_review(key, raw, attained),
     )
+
+
+def _review(key: str, raw: Mapping[str, Any], attained: bool) -> dict[str, Any]:
+    """The review date and its justification, each required of the other.
+
+    The date itself is NOT required of an unattained external, though the
+    doctrine of this file argues it should be — `owner` is required for exactly
+    the parallel reason, and an external nobody is scheduled to revisit is a
+    wish with an owner.
+
+    It is not required because of what requiring it costs. Every roadmap
+    fixture in the suite carries an unattained external, most of them for tests
+    about freezes, gate keys and item verdicts that have nothing to do with
+    scheduling; requiring a date would put two irrelevant fields in each of
+    them, and in every fixture written afterwards. The protection that actually
+    matters — that THIS repository's blockers all carry dates — is a test over
+    the shipped roadmap, which costs nothing and fails just as loudly.
+
+    What IS enforced is the coupling: a date with no stated reason is a date
+    nobody will defend when it slips, and six externals reviewed on the same
+    unexplained cadence produce six reviews that say the same thing.
+    """
+    review = _review_date(key, raw.get("review"))
+    because = str(raw.get("review_because", "")).strip()
+    if review is None:
+        if because:
+            raise RoadmapError(
+                f"external {key}: `review_because` with no `review` date. A reason to "
+                f"revisit, with no date to revisit on, schedules nothing"
+            )
+        return {"review": None, "review_because": ""}
+    if not because:
+        raise RoadmapError(
+            f"external {key}: `review` with no `review_because`. A date nobody "
+            f"justified is a date nobody will defend when it slips"
+        )
+    return {"review": review, "review_because": because}
 
 
 def _review_date(key: str, raw: Any) -> date | None:
