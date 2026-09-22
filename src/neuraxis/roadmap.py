@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -130,6 +130,21 @@ class Gate:
 
 
 @dataclass(frozen=True)
+class PendingDecision:
+    """A decision an external is waiting on, with the date it was written down.
+
+    Not the date it was *raised* — nobody can reconstruct that honestly — but
+    the date it stopped being prose in a note and became an entry somebody can
+    be asked about.
+    """
+
+    id: str
+    question: str
+    owner: str
+    recorded: date
+
+
+@dataclass(frozen=True)
 class External:
     """A dependency owned by someone else."""
 
@@ -140,6 +155,21 @@ class External:
     blocks_because: str = ""
     note: str = ""
     verify: tuple[str, ...] = ()
+    #: The decisions this external is actually waiting on. An external blocked
+    #: on "a decision" in prose is a blocker nobody can be asked about; named
+    #: and dated, it is a conversation with a subject.
+    decisions: tuple[PendingDecision, ...] = ()
+    #: When somebody looks at this again. Optional, because inventing a date
+    #: for a dependency that is not yours is worse than admitting there is
+    #: none — but an unattained external carrying one goes OVERDUE when it
+    #: passes, which is the whole point. A blocker with no review date is how
+    #: "blocked on T1" becomes "we will do T1 after".
+    review: date | None = None
+
+    def overdue(self, at: date | None = None) -> bool:
+        if self.attained or self.review is None:
+            return False
+        return (at or date.today()) > self.review
 
 
 @dataclass(frozen=True)
@@ -278,7 +308,9 @@ _ITEM_KEYS = frozenset({
 _GATE_KEYS = frozenset({"kind", "id", "run", "armed_on_exit"})
 _EXTERNAL_KEYS = frozenset({
     "title", "owner", "attained", "blocks_because", "note", "verify",
+    "decisions", "review",
 })
+_DECISION_KEYS = frozenset({"id", "question", "owner", "recorded"})
 _ACCEPTANCE_KEYS = frozenset({"kind", "run", "proves"})
 _FREEZE_KEYS = frozenset({
     "id", "in_force", "prohibits", "permits", "lifts_when", "operative_definition",
@@ -346,7 +378,62 @@ def _external(key: str, raw: Any) -> External:
         blocks_because=str(raw.get("blocks_because", "")).strip(),
         note=str(raw.get("note", "")).strip(),
         verify=tuple(str(p) for p in verify),
+        decisions=_decisions(key, raw.get("decisions"), owner),
+        review=_review_date(key, raw.get("review")),
     )
+
+
+def _review_date(key: str, raw: Any) -> date | None:
+    if raw is None:
+        return None
+    if isinstance(raw, date) and not isinstance(raw, datetime):
+        return raw
+    if isinstance(raw, datetime):
+        return raw.date()
+    if not isinstance(raw, str) or not raw.strip():
+        raise RoadmapError(
+            f"external {key}: `review` must be a date (YYYY-MM-DD), got {raw!r}"
+        )
+    try:
+        return date.fromisoformat(raw.strip())
+    except ValueError as exc:
+        raise RoadmapError(f"external {key}: `review` is not a date: {raw!r}") from exc
+
+
+def _decisions(key: str, raw: Any, default_owner: str) -> tuple[PendingDecision, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise RoadmapError(f"external {key}: `decisions` must be a list")
+    out: list[PendingDecision] = []
+    for entry in raw:
+        if not isinstance(entry, Mapping):
+            raise RoadmapError(f"external {key}: each decision must be a mapping")
+        _reject_unknown(entry, _DECISION_KEYS, f"external {key} decision")
+        did = str(entry.get("id", "")).strip()
+        question = str(entry.get("question", "")).strip()
+        if not did or not question:
+            # A decision with no question is a label, and a label cannot be
+            # answered. This is the same rule the register applies to rulings.
+            raise RoadmapError(
+                f"external {key}: a decision needs both `id` and `question`; "
+                f"got id={did!r}, question={question!r}"
+            )
+        recorded = _review_date(key, entry.get("recorded"))
+        if recorded is None:
+            raise RoadmapError(
+                f"external {key} decision {did}: `recorded` is required. An undated "
+                f"decision cannot go stale, which is how it stays open indefinitely"
+            )
+        out.append(
+            PendingDecision(
+                id=did,
+                question=question,
+                owner=str(entry.get("owner", "")).strip() or default_owner,
+                recorded=recorded,
+            )
+        )
+    return tuple(out)
 
 
 @dataclass(frozen=True)

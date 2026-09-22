@@ -493,6 +493,36 @@ def cmd_roadmap(args: argparse.Namespace) -> int:
             for owner, ids in sorted(owed.items()):
                 lines.append(f"  {owner:<12} {', '.join(sorted(ids))}")
 
+        # An external's review date and the decisions it waits on. Reported
+        # rather than stored as prose, because a blocker nobody is scheduled to
+        # look at again is indistinguishable from one nobody intends to resolve.
+        waiting = [e for e in roadmap.externals.values() if not e.attained]
+        pending = [e for e in waiting if e.decisions]
+        if pending:
+            lines += ["", "DECISIONS THESE BLOCKERS WAIT ON"]
+            for ext in sorted(pending, key=lambda e: e.id):
+                due = (
+                    f"review {ext.review.isoformat()}"
+                    + ("  OVERDUE" if ext.overdue() else "")
+                    if ext.review
+                    else "no review date set"
+                )
+                lines.append(f"  {ext.id}  ({due})")
+                for decision in ext.decisions:
+                    lines.append(
+                        f"    {decision.id:<14} {decision.owner:<10} "
+                        f"recorded {decision.recorded.isoformat()}"
+                    )
+                    lines.append(f"      {' '.join(decision.question.split())[:150]}")
+        undated = sorted(e.id for e in waiting if e.review is None)
+        if undated:
+            lines += [
+                "",
+                f"  NO REVIEW DATE: {', '.join(undated)}",
+                "  An unattained external nobody is scheduled to revisit is a wish with"
+                " an owner.",
+            ]
+
     if report.contradictions:
         lines += ["", "CONTRADICTIONS"]
         lines += [f"  {r.item.id}: {r.contradiction}" for r in report.contradictions]

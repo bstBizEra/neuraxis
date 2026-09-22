@@ -19,6 +19,7 @@ from neuraxis import AttestationStore, load_registry, load_roadmap
 from neuraxis.cli import main
 from neuraxis.roadmap import (
     BLOCKED,
+    External,
     GATE_KINDS,
     ITEM_STATES,
     READY,
@@ -123,6 +124,111 @@ def test_gv_05_does_not_inherit_the_loop_contract_blockers():
     assert verdicts["PKG-GV-05"] != BLOCKED
     assert verdicts["PKG-GV-09"] == BLOCKED
     assert report.contradictions == (), "a shipped item whose gates are unmet"
+
+
+def test_t1_records_its_blocking_decisions_with_dates():
+    """T1 blocks nine items; until v0.21.x it blocked them on prose.
+
+    The note said "two decisions that are not Claude's to take" and named them
+    in a sentence. A sentence cannot go stale, cannot be assigned, and cannot
+    be reported as overdue - which is precisely how the project's largest
+    blocker sat indefinitely without anyone deciding that it should.
+    """
+    t1 = load_roadmap().externals["T1"]
+    assert not t1.attained
+    assert t1.review is not None, "the keystone blocker has no review point"
+    assert {d.id for d in t1.decisions} == {"KBS-001-D-08", "T1-IDENTITY"}
+    for decision in t1.decisions:
+        assert decision.owner == "OP-Vily"
+        assert decision.recorded is not None
+        # A decision is a question somebody can answer, not a label.
+        assert decision.question.strip().endswith((".", "?")) and len(decision.question) > 40
+
+
+def test_an_external_goes_overdue_once_its_review_date_passes():
+    """The whole point of the date. If this never fires, the date is decoration."""
+    from datetime import timedelta
+
+    t1 = load_roadmap().externals["T1"]
+    assert not t1.overdue(at=t1.review)
+    assert not t1.overdue(at=t1.review - timedelta(days=1))
+    assert t1.overdue(at=t1.review + timedelta(days=1))
+
+
+def test_an_attained_external_is_never_overdue():
+    """A dependency that landed does not need revisiting."""
+    from datetime import date, timedelta
+
+    ext = External(
+        id="X", title="t", owner="o", attained=True, review=date(2020, 1, 1)
+    )
+    assert not ext.overdue(at=date(2020, 1, 1) + timedelta(days=9999))
+
+
+def test_a_decision_without_a_recorded_date_is_refused(tmp_path):
+    """An undated decision cannot go stale, which is how it stays open."""
+    with pytest.raises(RoadmapError, match="`recorded` is required"):
+        _resolved(tmp_path, """
+            version: 1
+            roadmap: test
+            externals:
+              EXT-A:
+                title: Something
+                owner: somebody
+                attained: false
+                decisions:
+                  - id: D-1
+                    question: Is this a question?
+            items:
+              - id: A
+                title: First
+                state: planned
+                owner: me
+                ungated_because: a fixture that waits on nothing
+        """)
+
+
+def test_a_decision_with_no_question_is_refused(tmp_path):
+    """A label cannot be answered."""
+    with pytest.raises(RoadmapError, match="needs both `id` and `question`"):
+        _resolved(tmp_path, """
+            version: 1
+            roadmap: test
+            externals:
+              EXT-A:
+                title: Something
+                owner: somebody
+                attained: false
+                decisions:
+                  - id: D-1
+                    recorded: 2026-01-01
+            items:
+              - id: A
+                title: First
+                state: planned
+                owner: me
+                ungated_because: a fixture that waits on nothing
+        """)
+
+
+def test_a_malformed_review_date_is_refused(tmp_path):
+    with pytest.raises(RoadmapError, match="`review` is not a date"):
+        _resolved(tmp_path, """
+            version: 1
+            roadmap: test
+            externals:
+              EXT-A:
+                title: Something
+                owner: somebody
+                attained: false
+                review: "next quarter"
+            items:
+              - id: A
+                title: First
+                state: planned
+                owner: me
+                ungated_because: a fixture that waits on nothing
+        """)
 
 
 def test_the_freeze_is_in_force_and_says_what_lifts_it():
