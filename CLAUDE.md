@@ -74,10 +74,34 @@ repository decorative.
 6. **Cut a release or push a tag.** Ratification is the operator's.
 7. **Skip, relax or quarantine a failing test** to get to green.
 
-Items 1 and 2 are enforced by `.claude/hooks/kernel_guard.py` for `Write`,
-`Edit` and the obvious shell shapes. The rest are enforced by nothing but this
-file, which is exactly the weakness named at the top — treat them as the list
-of controls most worth converting into mechanisms.
+### What actually enforces each of these
+
+Stated because the first version of this section said items 1 and 2 were
+mechanised and "the rest are enforced by nothing but this file", and that was
+wrong by the end of the same day. A list that overstates the backlog is the
+same defect as one that overstates the controls: both send the reader to the
+wrong place.
+
+| | Mechanism | Where |
+|---|---|---|
+| 1 Kernel | deny on `Write`/`Edit`, and the obvious shell shapes | `.claude/hooks/kernel_guard.py`; `neuraxis drift` after the fact |
+| 2 Evidence | same guard, for working-root `*.jsonl` | as above |
+| 3 Sign your own work | `V = 0` when performer and verifier match; the drill runner refuses `--verify --as <performer>` and has no flag to set `verifier` | `gate.py:_check_verifier_independence`, `scripts/rollback_drill.py` |
+| 4 Waivers | a waiver never licenses its issuer or the accountable party; the non-compensable set is union'd with the floor and the TTL is `min()`'d with the ceiling, so config can tighten but never widen | `waiver.py: Waiver.principals`, `NON_COMPENSABLE_FLOOR`, `MAX_TTL_CEILING` |
+| 5 Seats | decided mechanically, not by reading the record carefully | `neuraxis assist`; `docs/BIZTRUST-ASSIST.md` |
+| 6 Releases and tags | credential scope: the session token writes `refs/heads/*` and is refused on `refs/tags/*` | established by probe, 2026-09-22 |
+| 7 Weakening tests | a skip under `CI` fails the session | `tests/conftest.py: skip_verdict` |
+
+**What is genuinely unenforced**, and it is one thing rather than five:
+**identity**. `issued_by`, `accountable`, `--issuer` and a drill's `performer`
+are unauthenticated strings. Anyone who can run the CLI can claim to be
+anyone, so every control above holds against error and against an agent
+following the rules, and none of them holds against a determined liar. That is
+the T1 gap, it is named in `waiver.py`'s own module docstring, and no amount of
+local work closes it.
+
+Item 7 is the partial one: a *skipped* test is caught, a *weakened assertion*
+is not. That is the honest edge of the list.
 
 ---
 
