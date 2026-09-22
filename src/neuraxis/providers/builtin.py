@@ -1,6 +1,6 @@
 """Built-in providers.
 
-Four are real. Six are declared UNWIRED against named blockers, which is the
+Five are real. Five are declared UNWIRED against named blockers, which is the
 honest representation of where the T-queue actually stands — and it means
 `neuraxis assure` refuses to attest those controls rather than skipping them
 quietly.
@@ -280,6 +280,7 @@ class GateLogRatificationProvider(Provider):
         )
 
 
+from .drill import RollbackDrillProvider  # noqa: E402
 from .lease import LeaseAuthorityProvider, LeaseContainmentProvider  # noqa: E402
 
 # --- Controls with no source yet -------------------------------------------
@@ -288,10 +289,6 @@ from .lease import LeaseAuthorityProvider, LeaseContainmentProvider  # noqa: E40
 UNWIRED = (
     ("GV-01", "kbs-001/probe", "KBS-001 T1 — kernel boundary probe"),
     ("GV-03", "kbs-001/sink-worm", "KBS-001 T1 — WORM-backed evidence sink"),
-    # Not "v0.4" any more: that release is the loop contracts, and GV-05 was
-    # coupled to them by a roadmap bundle rather than by a dependency (v0.20.0).
-    # What is actually missing is a record contract and a drill that emits one.
-    ("GV-05", "nx/rollback-drill", "neuraxis — drill-record contract, then a drill that emits records"),
     ("GV-08", "kbs-001/external-probe", "KBS-001 T1 — external assurance org"),
     ("GV-09", "nx/lesson-provenance", "neuraxis v0.4 — lesson provenance binding"),
     ("GV-10", "nx/killswitch-drill", "KBS-001 E-13 — kill switch"),
@@ -310,6 +307,9 @@ def builtin_providers(**config: Any) -> list[Provider]:  # noqa: D401
         ),
         LeaseContainmentProvider(
             **{k: v for k, v in config.items() if k == "lease_log_path"}
+        ),
+        RollbackDrillProvider(
+            **{k: v for k, v in config.items() if k == "drill_log_path"}
         ),
     ]
     providers.extend(
