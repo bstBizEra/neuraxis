@@ -29,7 +29,12 @@ testpaths = ["tests"]
 addopts = "-q --strict-markers"
 
 [tool.coverage.run]
-source = ["neuraxis"]
+# scripts/ is here because rollback_drill.py produces GV-05's evidence and
+# ratification_gap.py decides whether the drift baseline is stale. Both were
+# outside the floor, and rollback_drill.py had sat at 61% - its whole main()
+# untested - while the package reported 93% and fail_under kept passing. A
+# floor that excludes the code most worth flooring is a number, not a control.
+source = ["neuraxis", "scripts"]
 branch = true
 
 [tool.coverage.report]
