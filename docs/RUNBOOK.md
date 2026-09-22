@@ -1,6 +1,6 @@
 # Operator runbook
 
-**For:** whoever is holding the pager. **Package:** `neuraxis` v0.10.0.
+**For:** whoever is holding the pager. **Package:** `neuraxis` v0.22.0.
 
 The roadmap asks this document to answer one question: *what do you do when a
 band closes at 02:00?* The short version is **usually nothing**, and the rest
