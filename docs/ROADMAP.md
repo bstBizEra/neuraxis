@@ -503,12 +503,17 @@ One provider per control, each a script that fails closed and emits an attestati
 - [x] `badf/gate-log` wired (GV-07) — five breach classes, record contract in `docs/GV-07-gate-log-contract.md`
 - [x] `l0/lease-audit` (GV-02) and `l0/scope-budget` (GV-06) wired — one lease log, two audits, contract in `docs/GV-02-GV-06-lease-log-contract.md`
 - [ ] GV-01/03/08 wired — **blocked on KBS-001 T1**
-- [ ] GV-05/09 wired — **blocked on neuraxis v0.4**
+- [ ] GV-09 wired — **blocked on T3**, the Canonical Lesson contract source
+- [ ] GV-05 wired — **not blocked**: the provider and its record contract are this package's to write
 - [ ] GV-10 wired — **blocked on KBS-001 E-13**
 
 The six unwired controls are declared as `UnwiredProvider` rather than omitted, each naming its blocker. `neuraxis providers` therefore reads as a live dependency view, and `assure` refuses to attest them rather than skipping them quietly.
 
-**Next wire-up:** GV-05 and GV-09 arrive with neuraxis v0.4 (blocked on T3/T4). The remaining four — GV-01, GV-03, GV-08 and GV-10 — all wait on KBS-001, and nothing in this package moves them.
+**Next wire-up: GV-05, and it is the only one.** Until v0.20.0 this line read *"GV-05 and GV-09 arrive with neuraxis v0.4 (blocked on T3/T4)"*, because the two shared one roadmap item, `PKG-GV-05-09`, gated on the v0.4 loop contracts. GV-09 belongs there — provenance binds a lesson to its evidence and needs the Lesson schema. GV-05 does not: a rollback drill audit has no relationship to the Canonical Lesson or Weakness Signal schemas, and it was reported as waiting on an external that does not block it. The item is now split (`PKG-GV-05`, `PKG-GV-09`), and `neuraxis roadmap` reports GV-05 as the package's one actionable item.
+
+**Unblocked is not built, and building it does not wire it.** GV-05 needs the GV-07 pattern — a drill-record contract in `docs/`, and a provider that recomputes the property from the records rather than trusting a tally L0 emits about itself. What still waits is the drill: a wired provider with no source FAILS, which stays the correct reading until somebody runs one.
+
+The remaining four — GV-01, GV-03, GV-08 and GV-10 — all wait on KBS-001, and nothing in this package moves them.
 
 **Every wired control so far specified its own evidence.** GV-07's gate log already existed; the L0 lease log does not, which makes its contract an input to the L0 design rather than a description of it. Specified afterwards, a provider audits whatever the implementation found convenient to record.
 
