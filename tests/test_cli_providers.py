@@ -54,8 +54,8 @@ def test_providers_lists_every_control(capsys, registry):
 def test_providers_reports_wired_count_and_blockers(capsys):
     code, out = _run(["--json", "providers"], capsys)
     payload = json.loads(out.out)
-    assert payload["wired"] == 4
-    for control in ("GV-02", "GV-04", "GV-06", "GV-07"):
+    assert payload["wired"] == 5
+    for control in ("GV-02", "GV-04", "GV-05", "GV-06", "GV-07"):
         assert payload["controls"][control]["state"] == "wired"
     assert payload["controls"]["GV-01"]["state"] == "unwired"
     assert "KBS-001" in payload["controls"]["GV-01"]["blocked_on"]
@@ -84,8 +84,8 @@ def test_assure_records_results_and_reports_unwired(tmp_path, clean_log, capsys)
     # supplied, so the others have no source. That is the correct outcome —
     # a check with no source is not a check that passed. Sorted because
     # provider ordering is not part of the contract.
-    assert sorted(payload["failed"]) == ["GV-02", "GV-06", "GV-07"]
-    assert len(payload["unwired"]) == 6
+    assert sorted(payload["failed"]) == ["GV-02", "GV-05", "GV-06", "GV-07"]
+    assert len(payload["unwired"]) == 5
     assert store.is_file()
 
 

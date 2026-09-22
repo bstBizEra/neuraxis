@@ -113,9 +113,16 @@ def test_gv_05_does_not_inherit_the_loop_contract_blockers():
     # GV-09's blocker is real and unchanged.
     assert [(g.kind, g.id) for g in gv09.gates] == [("item", "PKG-LOOP-CONTRACTS")]
 
-    # And the split is visible where it matters: something is finally actionable.
+    # And the split is visible where it matters: GV-05 does not resolve as
+    # blocked. Not "is actionable" — v0.21.0 shipped it, and a shipped item
+    # leaves the actionable queue, so asserting that would have pinned the
+    # split to the few days it was unbuilt and failed for the right work being
+    # done. BLOCKED is the state that would mean the bundle came back.
     report = roadmap.resolve(load_registry(), AttestationStore())
-    assert "PKG-GV-05" in {r.item.id for r in report.actionable}
+    verdicts = {r.item.id: r.verdict for r in report.items}
+    assert verdicts["PKG-GV-05"] != BLOCKED
+    assert verdicts["PKG-GV-09"] == BLOCKED
+    assert report.contradictions == (), "a shipped item whose gates are unmet"
 
 
 def test_the_freeze_is_in_force_and_says_what_lifts_it():

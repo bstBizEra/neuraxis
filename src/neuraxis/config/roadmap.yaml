@@ -409,8 +409,9 @@ items:
   - id: PKG-GV-05
     title: Provider for GV-05 reversibility - nx/rollback-drill
     score: null
-    state: planned
+    state: shipped
     owner: neuraxis
+    shipped_in: [v0.21.0]
     ungated_because: >-
       It was gated, wrongly. Until v0.20.0 this rode with GV-09 in a single item
       PKG-GV-05-09, whose one gate was PKG-LOOP-CONTRACTS, which waits on T3 and
@@ -420,12 +421,17 @@ items:
       pair was a bundle, not a dependency, and a blocker that is a string rather
       than a dependency is what the v0.19.0 audit was about.
     note: >-
-      Unblocked and unbuilt are different states. What this needs is the GV-07
-      pattern: a drill-record contract in docs/, and a provider that recomputes
-      the property from the records rather than trusting a tally. Neither waits
-      on anything external. What does wait is the drill itself - a provider with
-      no source FAILS, which is the correct reading until someone runs one, and
-      is why shipping the provider does not wire the control on its own.
+      Shipped in v0.21.0: the record contract is docs/GV-05-drill-log-contract.md
+      and the audit is neuraxis.providers.drill. The CONTROL is not attained by
+      that and does not become so until somebody runs a drill - a wired provider
+      with no source FAILS, which is the state today. What shipped is the check,
+      not the property.
+    acceptance:
+      - kind: command
+        run: ["neuraxis", "providers"]
+        proves: >-
+          GV-05 reports WIRED rather than naming a blocker, so the control has an
+          audit rather than a plan for one.
 
   - id: PKG-GV-10
     title: Provider for GV-10 kill-switch

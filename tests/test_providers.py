@@ -253,6 +253,7 @@ def test_wired_providers_are_exactly_the_ones_with_a_real_source():
         "badf/gate-log",
         "l0/lease-audit",
         "l0/scope-budget",
+        "nx/rollback-drill",
         "nx/verifier-independence",
     ]
 

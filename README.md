@@ -85,10 +85,11 @@ GV-01    kbs-001/probe                   UNWIRED   1d
                                          blocked on: KBS-001 T1 — kernel boundary probe
 GV-02    l0/lease-audit                  WIRED     1d
 GV-04    nx/verifier-independence        WIRED     7d
+GV-05    nx/rollback-drill               WIRED     30d
 GV-06    l0/scope-budget                 WIRED     7d
 GV-07    badf/gate-log                   WIRED     7d
 ...
-4 of 10 controls have a wired provider.
+5 of 10 controls have a wired provider.
 ```
 
 **UNWIRED is deliberate and visible.** A control whose real source does not exist yet is declared rather than omitted, so coverage is honest and `assure` refuses to attest it instead of skipping it quietly. The output doubles as a live view of the T-queue.
@@ -123,6 +124,17 @@ class MyProvider(Provider):
 **`badf/gate-log` (GV-07)** audits the BADF gate log for genuine human ratification — *automation may propose, never merge.* Five breach classes: no ratifier, self-ratification, an automation ratifier, ratification that post-dates the merge, and ratification that pre-dates the proposal.
 
 The fourth is the one worth building for. The first three catch a missing or miswired gate; ratified-after-merge catches a **working** gate that has quietly become ceremonial — the failure that arrives under schedule pressure and looks green the whole way. The record contract is in `docs/GV-07-gate-log-contract.md`.
+
+**`nx/rollback-drill` (GV-05)** audits a drill log for reversibility that was actually demonstrated. Nine breach classes, and the interesting ones are not the drill that failed — a failed drill is useful, and this control denies on it. They are the two that **pass**:
+
+- **nothing was mutated**, so the rollback restored a system already in its baseline state, and
+- **restoration was declared rather than compared** — no digests, so *restored* means the command exited zero.
+
+Both name an independent verifier, order their timestamps correctly and report success. Every field a reviewer skims is green. A ninth check works at sample level: a log of clean drills all older than the window attests nothing, because *reversibility holds* is a claim in the present tense.
+
+GV-05 carries a 30-day window because drills are disruptive — which is exactly the interval over which one becomes the thing you run to keep the control open. `MAX_DRILL_AGE` is a constant in code and may be tightened, never widened. The record contract is in `docs/GV-05-drill-log-contract.md`.
+
+> **Wired is not attained.** The provider ships; the control does not. Nothing has run a drill, so `nx/rollback-drill` has no source and FAILS — which is the correct reading, not a defect.
 
 **`l0/lease-audit` (GV-02)** and **`l0/scope-budget` (GV-06)** read one L0 lease log with two record kinds. Authority joins actions to leases and checks that each action ran *after* its lease was issued, before expiry, inside granted scope, under a lease no principal issued to itself. Containment checks that ceilings were declared, covered every resource consumed, were not exceeded, and were not widened by the principal they bound.
 
