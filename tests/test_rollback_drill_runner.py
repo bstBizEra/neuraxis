@@ -151,3 +151,106 @@ def test_a_drill_verified_by_another_principal_attests_gv_05(runner, tmp_path):
     result = run_provider(RollbackDrillProvider(drill_log_path=log))
     assert result.attests, result.result.detail
     assert result.to_attestation().result is True
+
+
+# ---------------------------------------------------------------------------
+# The command line, which is how anybody actually runs this
+#
+# Everything above exercises run_drill() and verify() as functions. main() -
+# the plumbing that reaches them - was untested, and it is a third of the file:
+# reading the log, picking the last record, rewriting the file. The refusals
+# are useless if the path to them is broken, and this is the script that
+# produces GV-05's evidence.
+# ---------------------------------------------------------------------------
+
+
+def _log_lines(path):
+    return [l for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+
+
+def test_the_cli_runs_a_drill_and_appends_it(runner, tmp_path, capsys):
+    log = tmp_path / "drill-log.jsonl"
+    assert runner.main(["--target", "target.md", "--append", str(log), "--drill-id", "D-1"]) == 0
+
+    records = [json.loads(l) for l in _log_lines(log)]
+    assert len(records) == 1
+    assert records[0]["drill_id"] == "D-1"
+    assert records[0]["outcome"] == "restored"
+    assert records[0]["verifier"] == "", "the CLI filled in a verifier"
+
+
+def test_the_cli_says_out_loud_that_it_will_not_verify(runner, tmp_path, capsys):
+    """The refusal has to reach the operator, not only the record.
+
+    A runner that quietly emitted an unverifiable record would be read as a
+    completed drill by whoever ran it.
+    """
+    runner.main(["--target", "target.md", "--drill-id", "D-2"])
+    err = capsys.readouterr().err
+    assert "will not" in err and "--verify" in err
+
+
+def test_the_cli_verifies_as_another_principal(runner, tmp_path):
+    log = tmp_path / "drill-log.jsonl"
+    runner.main(["--target", "target.md", "--append", str(log), "--drill-id", "D-3"])
+    assert runner.main(["--verify", str(log), "--as", "operator-vily"]) == 0
+
+    record = json.loads(_log_lines(log)[-1])
+    assert record["verifier"] == "operator-vily"
+    assert record["verified_at"]
+
+
+def test_the_cli_refuses_the_performer_as_verifier(runner, tmp_path):
+    log = tmp_path / "drill-log.jsonl"
+    runner.main(["--target", "target.md", "--append", str(log), "--drill-id", "D-4"])
+    performer = json.loads(_log_lines(log)[-1])["performer"]
+
+    with pytest.raises(SystemExit):
+        runner.main(["--verify", str(log), "--as", performer])
+
+    # And the record on disk is untouched: a refused verification must not
+    # leave a half-written claim behind.
+    assert json.loads(_log_lines(log)[-1])["verifier"] == ""
+
+
+def test_verifying_rewrites_only_the_last_record(runner, tmp_path):
+    """The check worth writing.
+
+    `--verify` reads every line, replaces the last, and writes the whole file
+    back. If that ever mangles the earlier lines it would corrupt evidence
+    silently - the log would still parse, still attest, and no longer say what
+    happened. So the earlier records are compared byte for byte.
+    """
+    log = tmp_path / "drill-log.jsonl"
+    runner.main(["--target", "target.md", "--append", str(log), "--drill-id", "D-5"])
+    runner.main(["--target", "target.md", "--append", str(log), "--drill-id", "D-6"])
+    before = _log_lines(log)
+    assert len(before) == 2
+
+    runner.main(["--verify", str(log), "--as", "operator-vily"])
+    after = _log_lines(log)
+
+    assert len(after) == 2
+    assert after[0] == before[0], "an earlier drill record was rewritten"
+    assert json.loads(after[1])["drill_id"] == "D-6"
+    assert json.loads(after[1])["verifier"] == "operator-vily"
+
+
+def test_verifying_an_empty_log_is_refused(runner, tmp_path):
+    """No records is not 'nothing to do' - it is a claim with no subject."""
+    log = tmp_path / "drill-log.jsonl"
+    log.write_text("\n\n", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        runner.main(["--verify", str(log), "--as", "operator-vily"])
+
+
+def test_a_log_written_with_a_bom_still_verifies(runner, tmp_path):
+    """PowerShell writes a BOM. Every other reader here uses utf-8-sig and this
+    one must too, or the drill fails for an encoding reason wearing a
+    governance one."""
+    log = tmp_path / "drill-log.jsonl"
+    runner.main(["--target", "target.md", "--append", str(log), "--drill-id", "D-7"])
+    log.write_text("﻿" + log.read_text(encoding="utf-8"), encoding="utf-8")
+
+    assert runner.main(["--verify", str(log), "--as", "operator-vily"]) == 0
+    assert json.loads(_log_lines(log)[-1])["verifier"] == "operator-vily"
