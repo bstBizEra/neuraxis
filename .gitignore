@@ -14,6 +14,7 @@ venv/
 .coverage
 .coverage.*
 htmlcov/
+coverage.json
 
 # Runtime state - never source.
 # Attestations and task logs are operational records. Under KBS-001 the
