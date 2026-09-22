@@ -64,6 +64,30 @@ jobs:
           echo "have=true" >> "$GITHUB_OUTPUT"
           cat ratified/REGISTRY-DIGEST.txt
 
+      # The job above asks whether the kernel matches the ratified version. It
+      # never asked whether that version is still a reasonable thing to compare
+      # against. On 2026-09-22 it was five days and three releases behind the
+      # package, because the tag push returns 403 on credential scope and
+      # nothing downstream said so. A baseline nobody checks goes stale the same
+      # way every other unchecked claim in this repository did.
+      #
+      # Runs unconditionally, including when no release exists at all: "there is
+      # nothing to compare against" is the most unratified state there is, and
+      # the step above exits 0 on it.
+      - name: How stale is the version being compared against?
+        run: |
+          code=0
+          python scripts/ratification_gap.py \
+            --released "${{ steps.ratified.outputs.tag }}" \
+            --grace-days "$GRACE_DAYS" \
+            ${{ inputs.strict && '--strict' || '' }} || code=$?
+
+          case "$code" in
+            0)  exit 0 ;;
+            10) echo "::error::ratification is stale beyond the grace window"; exit 1 ;;
+            *)  echo "::error::the ratification gap check could not run (exit $code)"; exit 1 ;;
+          esac
+
       - name: Compare
         if: steps.ratified.outputs.have == 'true'
         run: |
