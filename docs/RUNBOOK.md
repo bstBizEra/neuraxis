@@ -149,6 +149,28 @@ The weekly `drift` workflow reports a difference every run and fails only once
 the kernel has been unratified for more than 7 days. If it is failing, the
 answer is a release or a revert — not a longer grace window.
 
+### 4.1 `the newest ratified version is vX, N behind the package`
+
+The drift check compares the kernel against the **latest release**. This says
+that release is no longer a current reference: versions have shipped past it
+and none of them was ever published.
+
+```bash
+python scripts/ratification_gap.py --released "$(gh release list --limit 1 --json tagName --jq '.[0].tagName')"
+```
+
+It warns inside the same 7-day window the kernel rule uses and fails past it.
+The cause is almost always that a tag was never pushed — a release is a tag,
+and a tag that fails to push leaves `main` ahead of anything ratified while
+every other check stays green. Push the missing tags; `release.yml` publishes
+`REGISTRY-DIGEST.txt` and the reference is current again.
+
+**Why this matters when the kernel has not changed.** It does not, yet. It
+matters the moment it does: section 4 tells you to compare against "the release
+you believe you are running", and if that release is three versions old you are
+reading a true digest for the wrong baseline. The gap is reported so the answer
+to "unratified since when?" is not "since a date nobody recorded".
+
 ---
 
 ## 5. Obligations are outstanding
